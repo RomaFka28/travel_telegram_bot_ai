@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Final
 
@@ -66,6 +67,41 @@ class BotHandlers:
         if value is None:
             return False
         return bool(int(value))
+
+    @staticmethod
+    def _memory_usage_kb() -> int | None:
+        try:
+            import resource
+
+            return int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        except Exception:
+            return None
+
+    def _log_trip_action(
+        self,
+        stage: str,
+        *,
+        action: str | None = None,
+        trip_id: int | None = None,
+        user_id: int | None = None,
+        chat_id: int | None = None,
+        elapsed_ms: int | None = None,
+    ) -> None:
+        parts = [f"stage={stage}"]
+        if action is not None:
+            parts.append(f"action={action}")
+        if trip_id is not None:
+            parts.append(f"trip_id={trip_id}")
+        if user_id is not None:
+            parts.append(f"user_id={user_id}")
+        if chat_id is not None:
+            parts.append(f"chat_id={chat_id}")
+        if elapsed_ms is not None:
+            parts.append(f"elapsed_ms={elapsed_ms}")
+        memory_kb = self._memory_usage_kb()
+        if memory_kb is not None:
+            parts.append(f"rss_kb={memory_kb}")
+        logger.info("trip_action %s", " ".join(parts))
 
     async def _get_active_trip_or_reply(self, update: Update):
         chat = update.effective_chat
@@ -679,9 +715,19 @@ class BotHandlers:
         trip_id = context.user_data.pop("edit_trip_id", None)
         if not trip_id:
             return
+        started_at = time.perf_counter()
         message = update.effective_message
         if not message:
             return
+        chat = update.effective_chat
+        user = update.effective_user
+        self._log_trip_action(
+            "edit_start",
+            action="edit",
+            trip_id=int(trip_id),
+            user_id=user.id if user else None,
+            chat_id=chat.id if chat else None,
+        )
         trip = self.db.get_trip_by_id(int(trip_id))
         if not trip or trip["status"] != "active":
             await message.reply_text("\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u043f\u043b\u0430\u043d \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d.")
@@ -703,10 +749,19 @@ class BotHandlers:
             parse_mode=ParseMode.HTML,
             reply_markup=participant_status_keyboard(int(trip_id)),
         )
+        self._log_trip_action(
+            "edit_success",
+            action="edit",
+            trip_id=int(trip_id),
+            user_id=user.id if user else None,
+            chat_id=chat.id if chat else None,
+            elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+        )
     async def trip_action_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if not query or not query.from_user:
             return
+        started_at = time.perf_counter()
         try:
             _, trip_id_raw, action = (query.data or "").split(":", 2)
             trip_id = int(trip_id_raw)
@@ -721,49 +776,100 @@ class BotHandlers:
 
         user = query.from_user
         chat = update.effective_chat
+        self._log_trip_action(
+            "start",
+            action=action,
+            trip_id=trip_id,
+            user_id=user.id,
+            chat_id=chat.id if chat else None,
+        )
         if chat:
             self.db.set_selected_trip(chat.id, trip_id)
 
-        if action == "going":
-            full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip() or user.username or str(user.id)
-            self.db.upsert_participant(
+        try:
+            if action == "going":
+                full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip() or user.username or str(user.id)
+                self.db.upsert_participant(
+                    trip_id=trip_id,
+                    user_id=user.id,
+                    username=user.username,
+                    full_name=full_name,
+                    status="going",
+                )
+                if query.message:
+                    await query.edit_message_text(
+                        text=self._build_summary_html(trip_id),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=participant_status_keyboard(trip_id),
+                    )
+                await query.answer("\u041e\u0442\u043c\u0435\u0442\u0438\u043b, \u0447\u0442\u043e \u0432\u044b \u0435\u0434\u0435\u0442\u0435.")
+                self._log_trip_action(
+                    "success",
+                    action=action,
+                    trip_id=trip_id,
+                    user_id=user.id,
+                    chat_id=chat.id if chat else None,
+                    elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+                )
+                return
+
+            if action == "share":
+                username = context.bot.username
+                if not username:
+                    await query.answer("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443.", show_alert=True)
+                    return
+                token = self.db.create_share_token(trip_id, user.id)
+                share_link = f"https://t.me/{username}?start=trip_{token}"
+                if query.message:
+                    await query.message.reply_text(f"\u0421\u0441\u044b\u043b\u043a\u0430 \u0434\u043b\u044f \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f:\n{share_link}")
+                await query.answer("\u0421\u0441\u044b\u043b\u043a\u0443 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0432 \u0447\u0430\u0442.")
+                self._log_trip_action(
+                    "success",
+                    action=action,
+                    trip_id=trip_id,
+                    user_id=user.id,
+                    chat_id=chat.id if chat else None,
+                    elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+                )
+                return
+
+            if action == "edit":
+                context.user_data["edit_trip_id"] = trip_id
+                if query.message:
+                    await query.message.reply_text(
+                        "\u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u043e\u0434\u043d\u0438\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435\u043c, \u0447\u0442\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c. \u041d\u0430\u043f\u0440\u0438\u043c\u0435\u0440: \u00ab\u0441\u0434\u0435\u043b\u0430\u0439 4 \u0434\u043d\u044f, \u0431\u044e\u0434\u0436\u0435\u0442 \u0441\u0440\u0435\u0434\u043d\u0438\u0439, \u0434\u043e\u0431\u0430\u0432\u044c \u043c\u043e\u0440\u0435 \u0438 \u0435\u0434\u0443\u00bb."
+                    )
+                await query.answer("\u0416\u0434\u0443 \u0442\u0435\u043a\u0441\u0442 \u0434\u043b\u044f \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
+                self._log_trip_action(
+                    "success",
+                    action=action,
+                    trip_id=trip_id,
+                    user_id=user.id,
+                    chat_id=chat.id if chat else None,
+                    elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+                )
+                return
+
+            await query.answer("\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u043e\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435.", show_alert=True)
+            self._log_trip_action(
+                "unknown_action",
+                action=action,
                 trip_id=trip_id,
                 user_id=user.id,
-                username=user.username,
-                full_name=full_name,
-                status="going",
+                chat_id=chat.id if chat else None,
+                elapsed_ms=int((time.perf_counter() - started_at) * 1000),
             )
-            if query.message:
-                await query.edit_message_text(
-                    text=self._build_summary_html(trip_id),
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=participant_status_keyboard(trip_id),
-                )
-            await query.answer("\u041e\u0442\u043c\u0435\u0442\u0438\u043b, \u0447\u0442\u043e \u0432\u044b \u0435\u0434\u0435\u0442\u0435.")
-            return
-
-        if action == "share":
-            username = context.bot.username
-            if not username:
-                await query.answer("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443.", show_alert=True)
-                return
-            token = self.db.create_share_token(trip_id, user.id)
-            share_link = f"https://t.me/{username}?start=trip_{token}"
-            if query.message:
-                await query.message.reply_text(f"\u0421\u0441\u044b\u043b\u043a\u0430 \u0434\u043b\u044f \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f:\n{share_link}")
-            await query.answer("\u0421\u0441\u044b\u043b\u043a\u0443 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0432 \u0447\u0430\u0442.")
-            return
-
-        if action == "edit":
-            context.user_data["edit_trip_id"] = trip_id
-            if query.message:
-                await query.message.reply_text(
-                    "\u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u043e\u0434\u043d\u0438\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435\u043c, \u0447\u0442\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c. \u041d\u0430\u043f\u0440\u0438\u043c\u0435\u0440: \u00ab\u0441\u0434\u0435\u043b\u0430\u0439 4 \u0434\u043d\u044f, \u0431\u044e\u0434\u0436\u0435\u0442 \u0441\u0440\u0435\u0434\u043d\u0438\u0439, \u0434\u043e\u0431\u0430\u0432\u044c \u043c\u043e\u0440\u0435 \u0438 \u0435\u0434\u0443\u00bb."
-                )
-            await query.answer("\u0416\u0434\u0443 \u0442\u0435\u043a\u0441\u0442 \u0434\u043b\u044f \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
-            return
-
-        await query.answer("\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u043e\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435.", show_alert=True)
+        except Exception:
+            self._log_trip_action(
+                "error",
+                action=action,
+                trip_id=trip_id,
+                user_id=user.id,
+                chat_id=chat.id if chat else None,
+                elapsed_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+            logger.exception("trip_action failed")
+            raise
     async def add_date_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
@@ -896,6 +1002,14 @@ class BotHandlers:
             await update.effective_message.reply_text("Сейчас нет активной поездки.")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if isinstance(update, Update):
+            callback_data = update.callback_query.data if update.callback_query else None
+            logger.error(
+                "update_error chat_id=%s user_id=%s callback_data=%s",
+                update.effective_chat.id if update.effective_chat else None,
+                update.effective_user.id if update.effective_user else None,
+                callback_data,
+            )
         logger.exception("Unhandled error while processing update", exc_info=context.error)
         if isinstance(update, Update) and update.effective_message:
             try:
