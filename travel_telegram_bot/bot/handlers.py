@@ -49,6 +49,14 @@ class BotHandlers:
             "not_going": "❌ Не едут",
         }.get(status, "⏳ Не ответили")
 
+    @staticmethod
+    def _bool_from_db(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        return bool(int(value))
+
     async def _get_active_trip_or_reply(self, update: Update):
         chat = update.effective_chat
         if not chat:
@@ -212,7 +220,10 @@ class BotHandlers:
         self.db.update_trip_fields(trip_id, self._build_trip_payload(request, plan, notes_override=trip["notes"] or ""))
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        await update.effective_message.reply_text(
+        message = update.effective_message
+        if not message:
+            return
+        await message.reply_text(
             "Привет! Я обновлённый travel-бот для Telegram.\n\n"
             "Теперь я не только собираю участников, но и помогаю спланировать саму поездку: понимаю запрос обычным языком, делаю маршрут по дням, даю грубый бюджет, логистику и рекомендации по проживанию.\n\n"
             "Главные команды:\n"
@@ -638,7 +649,7 @@ class BotHandlers:
         if not chat:
             return
         settings = self.db.get_or_create_settings(chat.id)
-        reminders_enabled = bool(int(settings["reminders_enabled"]))
+        reminders_enabled = self._bool_from_db(settings["reminders_enabled"])
         await update.effective_message.reply_text(
             "Настройки этого чата:",
             reply_markup=settings_keyboard(reminders_enabled),
@@ -654,7 +665,7 @@ class BotHandlers:
             await query.answer("Неизвестное действие", show_alert=True)
             return
         settings = self.db.toggle_reminders(chat.id)
-        reminders_enabled = bool(int(settings["reminders_enabled"]))
+        reminders_enabled = self._bool_from_db(settings["reminders_enabled"])
         text = (
             "Настройки этого чата:\nНапоминания включены."
             if reminders_enabled
@@ -674,3 +685,10 @@ class BotHandlers:
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.exception("Unhandled error while processing update", exc_info=context.error)
+        if isinstance(update, Update) and update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    "Произошла внутренняя ошибка. Попробуйте ещё раз через несколько секунд."
+                )
+            except Exception:
+                logger.exception("Failed to notify user about handler error")
