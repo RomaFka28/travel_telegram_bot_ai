@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 from datetime import datetime
 from typing import Final
 
@@ -98,6 +99,73 @@ class BotHandlers:
             "source_prompt": trip["source_prompt"] or "",
         }
 
+    @staticmethod
+    def _has_days_hint(text: str) -> bool:
+        return bool(
+            re.search(
+                r"\b\d{1,2}\s*(?:-|\u2013|\u2014|\u0434\u043e)?\s*\d{0,2}\s*(?:\u0434\u043d(?:\u044f|\u0435\u0439)?|\u0441\u0443\u0442(?:\u043e\u043a)?|\u043d\u043e\u0447(?:\u044c|\u0438|\u0435\u0439)?)",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _has_budget_hint(text: str) -> bool:
+        lowered = text.lower()
+        return any(
+            keyword in lowered
+            for keyword in (
+                "\u0431\u044e\u0434\u0436",
+                "\u044d\u043a\u043e\u043d\u043e\u043c",
+                "\u0434\u0435\u0448\u0435\u0432",
+                "\u0441\u0440\u0435\u0434\u043d",
+                "\u043a\u043e\u043c\u0444\u043e\u0440\u0442",
+                "\u0434\u043e ",
+            )
+        )
+
+    @staticmethod
+    def _has_dates_hint(text: str) -> bool:
+        lowered = text.lower()
+        return any(
+            keyword in lowered
+            for keyword in (
+                "\u044f\u043d\u0432\u0430\u0440",
+                "\u0444\u0435\u0432\u0440\u0430\u043b",
+                "\u043c\u0430\u0440\u0442",
+                "\u0430\u043f\u0440\u0435\u043b",
+                "\u043c\u0430\u0439",
+                "\u0438\u044e\u043d",
+                "\u0438\u044e\u043b",
+                "\u0430\u0432\u0433\u0443\u0441\u0442",
+                "\u0441\u0435\u043d\u0442\u044f\u0431\u0440",
+                "\u043e\u043a\u0442\u044f\u0431\u0440",
+                "\u043d\u043e\u044f\u0431\u0440",
+                "\u0434\u0435\u043a\u0430\u0431\u0440",
+            )
+        ) or bool(re.search(r"\b\d{1,2}\s*(?:-|\u2013|\u2014|\u0434\u043e)\s*\d{1,2}\b", text))
+    def _merge_edit_request(self, trip: dict, edit_text: str):
+        current = self._request_from_trip_row(trip)
+        destination = self.planner._extract_destination(edit_text) or str(current["destination"])
+        origin = self.planner._extract_origin(edit_text) or str(current["origin"])
+        days_count = self.planner._extract_days_count(edit_text) if self._has_days_hint(edit_text) else int(current["days_count"])
+        dates_text = self.planner._extract_dates(edit_text) if self._has_dates_hint(edit_text) else str(current["dates_text"])
+        budget_text = self.planner._extract_budget(edit_text) if self._has_budget_hint(edit_text) else str(current["budget_text"])
+        interests = self.planner._extract_interests(edit_text)
+        interests_text = ", ".join(interests) if interests else str(current["interests_text"])
+        source_prompt = f"{current['source_prompt']}\n\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435: {edit_text}".strip()
+        return self.planner.build_request_from_fields(
+            title=f"{destination} \u2022 {days_count} \u0434\u043d. \u2022 {int(current['group_size'])} \u0447\u0435\u043b.",
+            destination=destination,
+            origin=origin,
+            dates_text=dates_text,
+            days_count=days_count,
+            group_size=int(current["group_size"]),
+            budget_text=budget_text,
+            interests_text=interests_text,
+            notes=str(current["notes"]),
+            source_prompt=source_prompt,
+        )
     def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
         notes = request.notes if notes_override is None else notes_override
         return {
@@ -123,19 +191,10 @@ class BotHandlers:
 
     def _participant_lines(self, trip_id: int) -> list[str]:
         participants = self.db.list_participants(trip_id)
-        grouped: dict[str, list[str]] = {"going": [], "interested": [], "not_going": []}
-        for participant in participants:
-            grouped.setdefault(participant["status"], []).append(participant["full_name"])
-
-        lines: list[str] = []
-        for status in ["going", "interested", "not_going"]:
-            names = grouped.get(status) or []
-            if names:
-                lines.append(f"{self._status_bucket(status)} ({len(names)}): {html.escape(', '.join(names))}")
-            else:
-                lines.append(f"{self._status_bucket(status)} (0): —")
-        return lines
-
+        going_names = [participant["full_name"] for participant in participants if participant["status"] == "going"]
+        if not going_names:
+            return ["\u2705 \u0415\u0434\u0443\u0442 (0): \u2014"]
+        return [f"\u2705 \u0415\u0434\u0443\u0442 ({len(going_names)}): {html.escape(', '.join(going_names))}"]
     def _date_lines(self, trip_id: int) -> list[str]:
         date_options = self.db.list_date_options(trip_id)
         return [
@@ -599,56 +658,112 @@ class BotHandlers:
             return
         participants = self.db.list_participants(int(trip["id"]))
         if not participants:
-            await update.effective_message.reply_text("Пока никто не отметил статус участия. Используй /status.")
+            await update.effective_message.reply_text("\u041f\u043e\u043a\u0430 \u043d\u0438\u043a\u0442\u043e \u043d\u0435 \u043d\u0430\u0436\u0430\u043b \u00ab\u0415\u0434\u0443\u00bb. \u0418\u0441\u043f\u043e\u043b\u044c\u0437\u0443\u0439 /status.")
             return
-        lines = [f"• {participant['full_name']} — {STATUS_LABELS.get(participant['status'], participant['status'])}" for participant in participants]
-        await update.effective_message.reply_text("Участники:\n" + "\n".join(lines))
-
+        going = [participant for participant in participants if participant["status"] == "going"]
+        if not going:
+            await update.effective_message.reply_text("\u041f\u043e\u043a\u0430 \u043d\u0438\u043a\u0442\u043e \u043d\u0435 \u043d\u0430\u0436\u0430\u043b \u00ab\u0415\u0434\u0443\u00bb.")
+            return
+        lines = [f"\u2022 {participant['full_name']} \u2014 \u2705 \u0415\u0434\u0443" for participant in going]
+        await update.effective_message.reply_text("\u0415\u0434\u0443\u0442:\n" + "\n".join(lines))
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
         await update.effective_message.reply_text(
-            "Выбери свой статус участия:",
+            "\u0412\u044b\u0431\u0435\u0440\u0438\u0442\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435 \u0434\u043b\u044f \u043f\u043e\u0435\u0437\u0434\u043a\u0438:",
             reply_markup=participant_status_keyboard(int(trip["id"])),
         )
 
-    async def participant_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handle_trip_edit_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        trip_id = context.user_data.pop("edit_trip_id", None)
+        if not trip_id:
+            return
+        message = update.effective_message
+        if not message:
+            return
+        trip = self.db.get_trip_by_id(int(trip_id))
+        if not trip or trip["status"] != "active":
+            await message.reply_text("\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u043f\u043b\u0430\u043d \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d.")
+            return
+        edit_text = (message.text or "").strip()
+        if not edit_text:
+            await message.reply_text("\u041d\u0443\u0436\u0435\u043d \u0442\u0435\u043a\u0441\u0442 \u0437\u0430\u043f\u0440\u043e\u0441\u0430 \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
+            return
+        request = self._merge_edit_request(trip, edit_text)
+        plan = self.planner.generate_plan(request)
+        self.db.update_trip_fields(
+            int(trip_id),
+            self._build_trip_payload(request, plan, notes_override=trip["notes"] or ""),
+        )
+        self._refresh_weather_for_trip(int(trip_id))
+        await message.reply_text("\u041f\u043b\u0430\u043d \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d.")
+        await message.reply_text(
+            self._build_summary_html(int(trip_id)),
+            parse_mode=ParseMode.HTML,
+            reply_markup=participant_status_keyboard(int(trip_id)),
+        )
+    async def trip_action_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if not query or not query.from_user:
             return
         try:
-            _, trip_id_raw, status = (query.data or "").split(":", 2)
+            _, trip_id_raw, action = (query.data or "").split(":", 2)
             trip_id = int(trip_id_raw)
         except (ValueError, AttributeError):
-            await query.answer("Не удалось распознать действие.", show_alert=True)
+            await query.answer("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0440\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u0442\u044c \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435.", show_alert=True)
             return
 
         trip = self.db.get_trip_by_id(trip_id)
         if not trip or trip["status"] != "active":
-            await query.answer("Эта поездка уже неактивна.", show_alert=True)
+            await query.answer("\u042d\u0442\u0430 \u043f\u043e\u0435\u0437\u0434\u043a\u0430 \u0443\u0436\u0435 \u043d\u0435\u0430\u043a\u0442\u0438\u0432\u043d\u0430.", show_alert=True)
             return
 
         user = query.from_user
-        full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip() or user.username or str(user.id)
-        self.db.upsert_participant(
-            trip_id=trip_id,
-            user_id=user.id,
-            username=user.username,
-            full_name=full_name,
-            status=status,
-        )
         chat = update.effective_chat
         if chat:
             self.db.set_selected_trip(chat.id, trip_id)
-        if query.message:
-            await query.edit_message_text(
-                text=self._build_summary_html(trip_id),
-                parse_mode=ParseMode.HTML,
-                reply_markup=participant_status_keyboard(trip_id),
-            )
-        await query.answer(f"Статус обновлён: {STATUS_LABELS.get(status, status)}")
 
+        if action == "going":
+            full_name = " ".join(part for part in [user.first_name, user.last_name] if part).strip() or user.username or str(user.id)
+            self.db.upsert_participant(
+                trip_id=trip_id,
+                user_id=user.id,
+                username=user.username,
+                full_name=full_name,
+                status="going",
+            )
+            if query.message:
+                await query.edit_message_text(
+                    text=self._build_summary_html(trip_id),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=participant_status_keyboard(trip_id),
+                )
+            await query.answer("\u041e\u0442\u043c\u0435\u0442\u0438\u043b, \u0447\u0442\u043e \u0432\u044b \u0435\u0434\u0435\u0442\u0435.")
+            return
+
+        if action == "share":
+            username = context.bot.username
+            if not username:
+                await query.answer("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443.", show_alert=True)
+                return
+            token = self.db.create_share_token(trip_id, user.id)
+            share_link = f"https://t.me/{username}?start=trip_{token}"
+            if query.message:
+                await query.message.reply_text(f"\u0421\u0441\u044b\u043b\u043a\u0430 \u0434\u043b\u044f \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f:\n{share_link}")
+            await query.answer("\u0421\u0441\u044b\u043b\u043a\u0443 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0432 \u0447\u0430\u0442.")
+            return
+
+        if action == "edit":
+            context.user_data["edit_trip_id"] = trip_id
+            if query.message:
+                await query.message.reply_text(
+                    "\u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u043e\u0434\u043d\u0438\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435\u043c, \u0447\u0442\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c. \u041d\u0430\u043f\u0440\u0438\u043c\u0435\u0440: \u00ab\u0441\u0434\u0435\u043b\u0430\u0439 4 \u0434\u043d\u044f, \u0431\u044e\u0434\u0436\u0435\u0442 \u0441\u0440\u0435\u0434\u043d\u0438\u0439, \u0434\u043e\u0431\u0430\u0432\u044c \u043c\u043e\u0440\u0435 \u0438 \u0435\u0434\u0443\u00bb."
+                )
+            await query.answer("\u0416\u0434\u0443 \u0442\u0435\u043a\u0441\u0442 \u0434\u043b\u044f \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
+            return
+
+        await query.answer("\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u043e\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435.", show_alert=True)
     async def add_date_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:

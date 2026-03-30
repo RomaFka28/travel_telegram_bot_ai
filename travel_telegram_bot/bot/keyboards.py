@@ -11,15 +11,11 @@ STATUS_LABELS = {
 
 
 def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
-    buttons = [
-        [
-            InlineKeyboardButton(
-                text=label,
-                callback_data=f"participant:{trip_id}:{status}",
-            )
-        ]
-        for status, label in STATUS_LABELS.items()
-    ]
+    buttons = [[
+        InlineKeyboardButton(text="✅ Еду", callback_data=f"tripaction:{trip_id}:going"),
+        InlineKeyboardButton(text="🔗 Поделиться", callback_data=f"tripaction:{trip_id}:share"),
+        InlineKeyboardButton(text="✏️ Изменить", callback_data=f"tripaction:{trip_id}:edit"),
+    ]]
     return InlineKeyboardMarkup(buttons)
 
 

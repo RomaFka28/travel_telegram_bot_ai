@@ -129,7 +129,8 @@ def build_application():
     app.add_handler(CommandHandler("settings", handlers.settings_command))
     app.add_handler(CommandHandler("archive_trip", handlers.archive_trip_command))
 
-    app.add_handler(CallbackQueryHandler(handlers.participant_callback, pattern=r"^participant:"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_trip_edit_input))
+    app.add_handler(CallbackQueryHandler(handlers.trip_action_callback, pattern=r"^tripaction:"))
     app.add_handler(CallbackQueryHandler(handlers.date_vote_callback, pattern=r"^datevote:"))
     app.add_handler(CallbackQueryHandler(handlers.settings_callback, pattern=r"^settings:"))
     app.add_error_handler(handlers.error_handler)

@@ -477,7 +477,12 @@ class Database:
                         (chat_id,),
                     )
                     cur.execute(sql, params)
-                    return int(cur.fetchone()["id"])
+                    trip_id = int(cur.fetchone()["id"])
+                    cur.execute(
+                        "DELETE FROM trips WHERE chat_id = %s AND status = 'archived'",
+                        (chat_id,),
+                    )
+                    return trip_id
 
         placeholders = ", ".join(["?"] * len(fields))
         sql = f"INSERT INTO trips({', '.join(fields)}) VALUES ({placeholders})"
@@ -487,6 +492,10 @@ class Database:
                 (chat_id,),
             )
             cursor = conn.execute(sql, params)
+            conn.execute(
+                "DELETE FROM trips WHERE chat_id = ? AND status = 'archived'",
+                (chat_id,),
+            )
             return int(cursor.lastrowid)
 
     def archive_active_trip(self, chat_id: int) -> bool:
@@ -497,14 +506,26 @@ class Database:
                         "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = %s AND status = 'active'",
                         (chat_id,),
                     )
-                    return cur.rowcount > 0
+                    archived = cur.rowcount > 0
+                    if archived:
+                        cur.execute(
+                            "DELETE FROM trips WHERE chat_id = %s AND status = 'archived'",
+                            (chat_id,),
+                        )
+                    return archived
 
         with self._connect() as conn:
             cursor = conn.execute(
                 "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND status = 'active'",
                 (chat_id,),
             )
-            return cursor.rowcount > 0
+            archived = cursor.rowcount > 0
+            if archived:
+                conn.execute(
+                    "DELETE FROM trips WHERE chat_id = ? AND status = 'archived'",
+                    (chat_id,),
+                )
+            return archived
 
     def update_trip_fields(self, trip_id: int, updates: dict[str, Any]) -> None:
         safe_updates = {key: value for key, value in updates.items() if key in EDITABLE_TRIP_FIELDS}
