@@ -1,11 +1,12 @@
 services:
-  - type: worker
+  - type: web
     name: travel-telegram-bot
     env: python
     rootDir: travel_telegram_bot
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     autoDeploy: true
+    healthCheckPath: /healthz
     envVars:
       - key: LOG_LEVEL
         value: INFO

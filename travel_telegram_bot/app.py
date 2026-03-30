@@ -26,6 +26,7 @@ from bot.handlers import (
 )
 from config import load_settings
 from database import Database
+from health_server import start_if_render
 from llm_travel_planner import LLMPlannerSettings, LLMTravelPlanner
 from travel_planner import TravelPlanner
 
@@ -134,5 +135,7 @@ def build_application():
 
 
 if __name__ == "__main__":
+    # Render Web Service requires binding to $PORT.
+    start_if_render()
     application = build_application()
     application.run_polling(allowed_updates=None, drop_pending_updates=True)
