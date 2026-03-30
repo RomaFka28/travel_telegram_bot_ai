@@ -66,7 +66,7 @@ def build_application():
         level=getattr(logging, settings.log_level, logging.INFO),
     )
 
-    database = Database(settings.database_path)
+    database = Database(settings.database_dsn)
     database.init_db()
     planner: TravelPlanner
     if settings.openrouter_api_key:

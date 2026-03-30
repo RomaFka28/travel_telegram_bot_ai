@@ -10,10 +10,3 @@ services:
     envVars:
       - key: LOG_LEVEL
         value: INFO
-      - key: DATABASE_PATH
-        value: /var/data/travel_bot.db
-    disk:
-      name: travel-bot-data
-      mountPath: /var/data
-      sizeGB: 1
-

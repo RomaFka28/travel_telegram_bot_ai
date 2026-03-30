@@ -79,7 +79,7 @@ travel_telegram_bot/
 
 ### Основные модули
 - `travel_planner.py` — парсинг travel-запроса и генерация плана;
-- `database.py` — SQLite-хранилище поездок, участников, дат и настроек;
+- `database.py` — хранилище поездок, участников, дат и настроек с поддержкой PostgreSQL и SQLite fallback;
 - `bot/handlers.py` — команды Telegram и сценарии диалога;
 - `app.py` — регистрация команд и запуск polling.
 
@@ -111,9 +111,9 @@ python app.py
    - `TELEGRAM_BOT_TOKEN`
    - `OPENROUTER_API_KEY` (если используете `/planai`)
    - `OPENROUTER_MODEL` (например `stepfun/step-3.5-flash:free`)
-   - `DATABASE_PATH=/var/data/travel_bot.db`
-5. Включите **Persistent Disk** с mount path `/var/data`, чтобы SQLite не терялась при рестартах.
-6. Если Render не дал доступ к `/var/data`, бот автоматически переключится на локальный файл `travel_telegram_bot/data/travel_bot.db` и не упадёт на старте. В этом режиме база будет временной, пока не заработает Persistent Disk.
+   - `DATABASE_URL=postgresql://...`
+5. Для бесплатного Render используйте внешнюю PostgreSQL-базу, например Supabase или Neon. Бот автоматически возьмёт `DATABASE_URL`, если переменная задана.
+6. `DATABASE_PATH` нужен только как локальный fallback для SQLite. Если `DATABASE_URL` не задан, бот будет писать в файл `data/travel_bot.db`.
 
 ## Поведение в групповых чатах
 
