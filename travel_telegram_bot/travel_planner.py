@@ -43,7 +43,7 @@ class TripRequest:
 
     @property
     def interests_text(self) -> str:
-        return ", ".join(self.interests) if self.interests else "главные места, еда и спокойный ритм"
+        return ", ".join(self.interests) if self.interests else "не указаны"
 
 
 @dataclass(slots=True)
@@ -511,7 +511,7 @@ class TravelPlanner:
             days_count=days_count,
             group_size=group_size,
             budget_text=budget_text,
-            interests=interests or ["город", "еда"],
+            interests=interests,
             notes=cleaned,
             source_prompt=cleaned,
         )
@@ -543,7 +543,7 @@ class TravelPlanner:
             days_count=max(1, int(days_count or 3)),
             group_size=max(1, int(group_size or 2)),
             budget_text=(budget_text or "средний").strip(),
-            interests=interests or ["город", "еда"],
+            interests=interests,
             notes=(notes or "").strip(),
             source_prompt=(source_prompt or notes or f"Поездка в {destination_clean}").strip(),
         )
@@ -643,6 +643,14 @@ class TravelPlanner:
 
     @staticmethod
     def _extract_days_count(text: str) -> int:
+        range_match = re.search(
+            r"\b(?:на\s+)?(\d{1,2})\s*(?:-|–|—|до)\s*(\d{1,2})\s*(?:дн(?:я|ей)?|сут(?:ок)?|ноч(?:ь|и|ей)?)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if range_match:
+            value = min(int(range_match.group(1)), int(range_match.group(2)))
+            return max(1, min(value, 14))
         patterns = [
             r"\bна\s+(\d{1,2})\s*(?:дн(?:я|ей)?|сут(?:ок)?|ноч(?:ь|и|ей)?)",
             r"\b(\d{1,2})\s*(?:дн(?:я|ей)?|сут(?:ок)?|ноч(?:ь|и|ей)?)",
@@ -656,6 +664,14 @@ class TravelPlanner:
 
     @staticmethod
     def _extract_group_size(text: str) -> int:
+        lowered = text.lower()
+        for value, patterns in {
+            1: [r"\bя\s+буду\s+один\b", r"\bя\s+буду\s+одна\b", r"\bбуду\s+один\b", r"\bбуду\s+одна\b", r"\bодин\b", r"\bодна\b", r"\bсам\b", r"\bсама\b"],
+            2: [r"\bвдвоем\b", r"\bвдвоём\b", r"\bнас\s+двое\b"],
+            3: [r"\bвтроем\b", r"\bвтроём\b", r"\bнас\s+трое\b"],
+        }.items():
+            if any(re.search(pattern, lowered, flags=re.IGNORECASE) for pattern in patterns):
+                return value
         patterns = [
             r"\bнас\s+(\d{1,2})\b",
             r"\bмы\s+(\d{1,2})\b",
@@ -679,6 +695,12 @@ class TravelPlanner:
             return None
         candidate = re.split(r"[,.;:!?]", match.group(1))[0].strip()
         candidate = re.sub(r"\b(на|в|во)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+        candidate = re.sub(
+            r"\b(я|мы|буду|будем|один|одна|вдвоем|вдвоём|втроем|втроём|сам|сама|подешевле|дешевле)\b.*$",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip()
         return candidate or None
 
     @staticmethod

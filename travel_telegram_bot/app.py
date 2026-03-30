@@ -37,6 +37,7 @@ async def post_init(application) -> None:
         BotCommand("help", "Список команд"),
         BotCommand("plan", "Создать поездку из свободного текста"),
         BotCommand("planai", "Создать поездку через LLM (OpenRouter)"),
+        BotCommand("share", "Поделиться планом"),
         BotCommand("newtrip", "Создать поездку пошагово"),
         BotCommand("summary", "Показать сводку"),
         BotCommand("brief", "Показать travel-brief"),
@@ -108,6 +109,7 @@ def build_application():
     app.add_handler(new_trip_conversation)
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_command))
+    app.add_handler(CommandHandler("share", handlers.share_command))
     app.add_handler(CommandHandler("plan", handlers.plan_command))
     app.add_handler(CommandHandler("planai", handlers.plan_ai_command))
     app.add_handler(CommandHandler("summary", handlers.summary_command))

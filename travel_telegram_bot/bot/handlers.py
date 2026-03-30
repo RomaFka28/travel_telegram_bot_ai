@@ -61,7 +61,14 @@ class BotHandlers:
         chat = update.effective_chat
         if not chat:
             return None
+        selected_trip = self.db.get_selected_trip(chat.id)
+        if selected_trip and selected_trip.get("status") == "active":
+            return selected_trip
+        if selected_trip and selected_trip.get("status") != "active":
+            self.db.set_selected_trip(chat.id, None)
         trip = self.db.get_active_trip(chat.id)
+        if trip:
+            self.db.set_selected_trip(chat.id, int(trip["id"]))
         if not trip and update.effective_message:
             await update.effective_message.reply_text(
                 "Пока нет активной поездки. Запусти /plan <запрос> или создай её пошагово через /newtrip."
@@ -223,6 +230,25 @@ class BotHandlers:
         message = update.effective_message
         if not message:
             return
+        chat = update.effective_chat
+        if context.args and chat:
+            raw_payload = (context.args[0] or "").strip()
+            if raw_payload.startswith("trip_"):
+                token = raw_payload.removeprefix("trip_")
+                trip = self.db.get_trip_by_share_token(token)
+                if not trip or trip.get("status") != "active":
+                    await message.reply_text("Эта ссылка уже неактуальна или план не найден.")
+                    return
+                self.db.set_selected_trip(chat.id, int(trip["id"]))
+                await message.reply_text(
+                    "План открыт. Ниже текущая карточка поездки, можно смотреть детали и отмечать участие."
+                )
+                await message.reply_text(
+                    self._build_summary_html(int(trip["id"])),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=participant_status_keyboard(int(trip["id"])),
+                )
+                return
         await message.reply_text(
             "Привет! Я обновлённый travel-бот для Telegram.\n\n"
             "Теперь я не только собираю участников, но и помогаю спланировать саму поездку: понимаю запрос обычным языком, делаю маршрут по дням, даю грубый бюджет, логистику и рекомендации по проживанию.\n\n"
@@ -244,6 +270,22 @@ class BotHandlers:
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await self.start(update, context)
+
+    async def share_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        trip = await self._get_active_trip_or_reply(update)
+        message = update.effective_message
+        if not trip or not message:
+            return
+        username = context.bot.username
+        if not username:
+            await message.reply_text("Не удалось получить username бота для ссылки. Попробуйте чуть позже.")
+            return
+        token = self.db.create_share_token(int(trip["id"]), update.effective_user.id if update.effective_user else None)
+        share_link = f"https://t.me/{username}?start=trip_{token}"
+        await message.reply_text(
+            "Отправьте эту ссылку другим участникам. По ней откроется текущий план и можно будет отметить участие:\n"
+            f"{share_link}"
+        )
 
     async def plan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not context.args:
@@ -269,6 +311,7 @@ class BotHandlers:
         plan = self.planner.generate_plan(request)
         payload = self._build_trip_payload(request, plan, notes_override="")
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
+        self.db.set_selected_trip(chat.id, trip_id)
         self._refresh_weather_for_trip(trip_id)
 
         await update.effective_message.reply_text(
@@ -317,6 +360,7 @@ class BotHandlers:
 
         payload = self._build_trip_payload(request, plan, notes_override="")
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
+        self.db.set_selected_trip(chat.id, trip_id)
         self._refresh_weather_for_trip(trip_id)
         await update.effective_message.reply_text("Готово. Поездка сохранена.")
         await update.effective_message.reply_text(
@@ -416,6 +460,7 @@ class BotHandlers:
         plan = self.planner.generate_plan(request)
         payload = self._build_trip_payload(request, plan, notes_override=notes)
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
+        self.db.set_selected_trip(chat.id, trip_id)
         self._refresh_weather_for_trip(trip_id)
         context.user_data.pop("trip_draft", None)
 
@@ -528,7 +573,6 @@ class BotHandlers:
         query = update.callback_query
         if not query or not query.from_user:
             return
-        await query.answer()
         try:
             _, trip_id_raw, status = (query.data or "").split(":", 2)
             trip_id = int(trip_id_raw)
@@ -550,6 +594,15 @@ class BotHandlers:
             full_name=full_name,
             status=status,
         )
+        chat = update.effective_chat
+        if chat:
+            self.db.set_selected_trip(chat.id, trip_id)
+        if query.message:
+            await query.edit_message_text(
+                text=self._build_summary_html(trip_id),
+                parse_mode=ParseMode.HTML,
+                reply_markup=participant_status_keyboard(trip_id),
+            )
         await query.answer(f"Статус обновлён: {STATUS_LABELS.get(status, status)}")
 
     async def add_date_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -571,7 +624,6 @@ class BotHandlers:
         query = update.callback_query
         if not query or not query.from_user:
             return
-        await query.answer()
         try:
             _, option_id_raw = (query.data or "").split(":", 1)
             option_id = int(option_id_raw)
@@ -679,6 +731,7 @@ class BotHandlers:
             return
         archived = self.db.archive_active_trip(chat.id)
         if archived:
+            self.db.set_selected_trip(chat.id, None)
             await update.effective_message.reply_text("Активная поездка закрыта. Можно собрать новую через /plan или /newtrip.")
         else:
             await update.effective_message.reply_text("Сейчас нет активной поездки.")

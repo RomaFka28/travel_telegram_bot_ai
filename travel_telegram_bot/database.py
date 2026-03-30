@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -121,7 +122,8 @@ class Database:
 
                 CREATE TABLE IF NOT EXISTS chat_settings (
                     chat_id INTEGER PRIMARY KEY,
-                    reminders_enabled INTEGER NOT NULL DEFAULT 1
+                    reminders_enabled INTEGER NOT NULL DEFAULT 1,
+                    selected_trip_id INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS date_options (
@@ -141,12 +143,24 @@ class Database:
                     UNIQUE(option_id, user_id),
                     FOREIGN KEY (option_id) REFERENCES date_options(id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS trip_links (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    token TEXT NOT NULL UNIQUE,
+                    trip_id INTEGER NOT NULL,
+                    created_by INTEGER,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
+                );
                 """
             )
             existing_columns = self._sqlite_table_columns(conn, "trips")
             for column_name, definition in TRIP_COLUMNS.items():
                 if column_name not in existing_columns:
                     conn.execute(f"ALTER TABLE trips ADD COLUMN {column_name} {definition}")
+            chat_settings_columns = self._sqlite_table_columns(conn, "chat_settings")
+            if "selected_trip_id" not in chat_settings_columns:
+                conn.execute("ALTER TABLE chat_settings ADD COLUMN selected_trip_id INTEGER")
 
     def _init_postgres(self) -> None:
         with self._connect() as conn:
@@ -186,7 +200,8 @@ class Database:
                     """
                     CREATE TABLE IF NOT EXISTS chat_settings (
                         chat_id BIGINT PRIMARY KEY,
-                        reminders_enabled BOOLEAN NOT NULL DEFAULT TRUE
+                        reminders_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                        selected_trip_id BIGINT
                     )
                     """
                 )
@@ -211,6 +226,20 @@ class Database:
                         UNIQUE (option_id, user_id)
                     )
                     """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS trip_links (
+                        id BIGSERIAL PRIMARY KEY,
+                        token TEXT NOT NULL UNIQUE,
+                        trip_id BIGINT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+                        created_by BIGINT,
+                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                cur.execute(
+                    "ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS selected_trip_id BIGINT"
                 )
                 for column_name, definition in TRIP_COLUMNS.items():
                     cur.execute(
@@ -251,11 +280,15 @@ class Database:
                         (chat_id,),
                     )
                     cur.execute(
-                        "SELECT chat_id, reminders_enabled FROM chat_settings WHERE chat_id = %s",
+                        "SELECT chat_id, reminders_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
                         (chat_id,),
                     )
                     row = cur.fetchone()
-                    return self._row_to_dict(row) or {"chat_id": chat_id, "reminders_enabled": True}
+                    return self._row_to_dict(row) or {
+                        "chat_id": chat_id,
+                        "reminders_enabled": True,
+                        "selected_trip_id": None,
+                    }
 
         with self._connect() as conn:
             conn.execute(
@@ -266,7 +299,11 @@ class Database:
                 "SELECT * FROM chat_settings WHERE chat_id = ?",
                 (chat_id,),
             ).fetchone()
-            return self._row_to_dict(row) or {"chat_id": chat_id, "reminders_enabled": 1}
+            return self._row_to_dict(row) or {
+                "chat_id": chat_id,
+                "reminders_enabled": 1,
+                "selected_trip_id": None,
+            }
 
     def toggle_reminders(self, chat_id: int) -> dict[str, Any]:
         current = self.get_or_create_settings(chat_id)
@@ -280,11 +317,15 @@ class Database:
                         (new_value, chat_id),
                     )
                     cur.execute(
-                        "SELECT chat_id, reminders_enabled FROM chat_settings WHERE chat_id = %s",
+                        "SELECT chat_id, reminders_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
                         (chat_id,),
                     )
                     row = cur.fetchone()
-                    return self._row_to_dict(row) or {"chat_id": chat_id, "reminders_enabled": new_value}
+                    return self._row_to_dict(row) or {
+                        "chat_id": chat_id,
+                        "reminders_enabled": new_value,
+                        "selected_trip_id": None,
+                    }
 
         with self._connect() as conn:
             conn.execute(
@@ -295,7 +336,99 @@ class Database:
                 "SELECT * FROM chat_settings WHERE chat_id = ?",
                 (chat_id,),
             ).fetchone()
-            return self._row_to_dict(row) or {"chat_id": chat_id, "reminders_enabled": 1 if new_value else 0}
+            return self._row_to_dict(row) or {
+                "chat_id": chat_id,
+                "reminders_enabled": 1 if new_value else 0,
+                "selected_trip_id": None,
+            }
+
+    def set_selected_trip(self, chat_id: int, trip_id: int | None) -> None:
+        self.get_or_create_settings(chat_id)
+
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE chat_settings SET selected_trip_id = %s WHERE chat_id = %s",
+                        (trip_id, chat_id),
+                    )
+            return
+
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE chat_settings SET selected_trip_id = ? WHERE chat_id = ?",
+                (trip_id, chat_id),
+            )
+
+    def get_selected_trip(self, chat_id: int) -> dict[str, Any] | None:
+        settings = self.get_or_create_settings(chat_id)
+        selected_trip_id = settings.get("selected_trip_id")
+        if not selected_trip_id:
+            return None
+        return self.get_trip_by_id(int(selected_trip_id))
+
+    def create_share_token(self, trip_id: int, created_by: int | None) -> str:
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT token FROM trip_links WHERE trip_id = %s ORDER BY id ASC LIMIT 1",
+                        (trip_id,),
+                    )
+                    existing = cur.fetchone()
+                    if existing:
+                        return str(existing["token"])
+
+                    token = secrets.token_urlsafe(8)
+                    cur.execute(
+                        "INSERT INTO trip_links(token, trip_id, created_by) VALUES (%s, %s, %s)",
+                        (token, trip_id, created_by),
+                    )
+                    return token
+
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT token FROM trip_links WHERE trip_id = ? ORDER BY id ASC LIMIT 1",
+                (trip_id,),
+            ).fetchone()
+            if existing:
+                return str(existing["token"])
+
+            token = secrets.token_urlsafe(8)
+            conn.execute(
+                "INSERT INTO trip_links(token, trip_id, created_by) VALUES (?, ?, ?)",
+                (token, trip_id, created_by),
+            )
+            return token
+
+    def get_trip_by_share_token(self, token: str) -> dict[str, Any] | None:
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT t.*
+                        FROM trip_links l
+                        JOIN trips t ON t.id = l.trip_id
+                        WHERE l.token = %s
+                        LIMIT 1
+                        """,
+                        (token,),
+                    )
+                    return self._row_to_dict(cur.fetchone())
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT t.*
+                FROM trip_links l
+                JOIN trips t ON t.id = l.trip_id
+                WHERE l.token = ?
+                LIMIT 1
+                """,
+                (token,),
+            ).fetchone()
+            return self._row_to_dict(row)
 
     def get_active_trip(self, chat_id: int) -> dict[str, Any] | None:
         query = """
