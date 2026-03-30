@@ -5,11 +5,20 @@ import logging
 from datetime import datetime
 from typing import Final
 
-from telegram import Update
+from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
-from bot.keyboards import STATUS_LABELS, date_vote_keyboard, participant_status_keyboard, settings_keyboard
+from bot.keyboards import (
+    STATUS_LABELS,
+    date_vote_keyboard,
+    participant_status_keyboard,
+    settings_keyboard,
+    trip_budget_keyboard,
+    trip_days_keyboard,
+    trip_group_size_keyboard,
+    trip_skip_keyboard,
+)
 from database import Database
 from llm_travel_planner import LLMTravelPlanner
 from travel_planner import TravelPlanner
@@ -383,12 +392,20 @@ class BotHandlers:
     async def new_trip_destination(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["destination"] = (update.effective_message.text or "").strip()
         await update.effective_message.reply_text("Откуда стартуете? Если пока не знаете — отправьте '-'.")
+        await update.effective_message.reply_text(
+            "Можно пропустить этот шаг кнопкой ниже.",
+            reply_markup=trip_skip_keyboard(),
+        )
         return NEW_TRIP_ORIGIN
 
     async def new_trip_origin(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         origin = (update.effective_message.text or "").strip()
         context.user_data.setdefault("trip_draft", {})["origin"] = "не указано" if origin == "-" else origin
         await update.effective_message.reply_text("На сколько дней поездка?")
+        await update.effective_message.reply_text(
+            "Выберите длительность кнопкой или введите своё число.",
+            reply_markup=trip_days_keyboard(),
+        )
         return NEW_TRIP_DAYS
 
     async def new_trip_days(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -400,11 +417,19 @@ class BotHandlers:
             return NEW_TRIP_DAYS
         context.user_data.setdefault("trip_draft", {})["days_count"] = days_count
         await update.effective_message.reply_text("Какие ориентировочные даты или сезон? Например: 12–16 июня, майские, август.")
+        await update.effective_message.reply_text(
+            "Даты можно написать свободно.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return NEW_TRIP_DATES
 
     async def new_trip_dates(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["dates_text"] = (update.effective_message.text or "").strip()
         await update.effective_message.reply_text("Сколько человек планируете? Если пока прикидка — всё равно напишите число.")
+        await update.effective_message.reply_text(
+            "Выберите размер группы кнопкой или введите своё число.",
+            reply_markup=trip_group_size_keyboard(),
+        )
         return NEW_TRIP_GROUP_SIZE
 
     async def new_trip_group_size(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -416,16 +441,28 @@ class BotHandlers:
             return NEW_TRIP_GROUP_SIZE
         context.user_data.setdefault("trip_draft", {})["group_size"] = group_size
         await update.effective_message.reply_text("Какой бюджет? Например: эконом, средний, комфорт, до 80 000 на человека.")
+        await update.effective_message.reply_text(
+            "Можно выбрать готовый вариант кнопкой.",
+            reply_markup=trip_budget_keyboard(),
+        )
         return NEW_TRIP_BUDGET
 
     async def new_trip_budget(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["budget_text"] = (update.effective_message.text or "").strip()
         await update.effective_message.reply_text("Что важно в поездке? Напиши интересы через запятую: еда, природа, история, море, спокойный темп.")
+        await update.effective_message.reply_text(
+            "Здесь лучше написать текстом: например 'море, еда, спокойный темп'.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return NEW_TRIP_INTERESTS
 
     async def new_trip_interests(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["interests_text"] = (update.effective_message.text or "").strip()
         await update.effective_message.reply_text("Есть заметки или открытые вопросы? Если нет — отправьте '-'.")
+        await update.effective_message.reply_text(
+            "Если заметок нет, нажмите кнопку ниже.",
+            reply_markup=trip_skip_keyboard(),
+        )
         return NEW_TRIP_NOTES
 
     async def new_trip_notes(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -470,11 +507,18 @@ class BotHandlers:
             parse_mode=ParseMode.HTML,
             reply_markup=participant_status_keyboard(trip_id),
         )
+        await update.effective_message.reply_text(
+            "Мастер завершён.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return ConversationHandler.END
 
     async def cancel_new_trip(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.pop("trip_draft", None)
-        await update.effective_message.reply_text("Создание поездки отменено.")
+        await update.effective_message.reply_text(
+            "Создание поездки отменено.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return ConversationHandler.END
 
     async def summary_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
