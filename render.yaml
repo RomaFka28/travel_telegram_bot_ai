@@ -1,0 +1,18 @@
+services:
+  - type: worker
+    name: travel-telegram-bot
+    env: python
+    rootDir: travel_telegram_bot
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    autoDeploy: true
+    envVars:
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_PATH
+        value: /var/data/travel_bot.db
+    disk:
+      name: travel-bot-data
+      mountPath: /var/data
+      sizeGB: 1
+

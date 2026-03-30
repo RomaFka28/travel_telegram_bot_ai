@@ -1,0 +1,897 @@
+from __future__ import annotations
+
+import math
+import re
+from dataclasses import dataclass
+from typing import Iterable
+
+
+RUS_MONTH_WORDS = [
+    "январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр",
+    "весн", "лет", "осен", "зим", "майск", "новогод", "выходн",
+]
+
+INTEREST_KEYWORDS: dict[str, list[str]] = {
+    "природа": ["природ", "вид", "море", "пляж", "гора", "парк", "лес", "остров", "поход", "закат"],
+    "еда": ["еда", "гастро", "ресторан", "кафе", "кофе", "морепродукт", "рынок", "уличн", "бар"],
+    "история": ["истори", "музе", "архитект", "крепост", "храм", "собор", "галере", "старый город"],
+    "город": ["город", "центр", "улоч", "район", "атмосфер", "смотров", "набереж"],
+    "спокойно": ["спокой", "без спеш", "медлен", "релакс", "тихо"],
+    "активно": ["актив", "насыщ", "много всего", "ранний старт", "максимум"],
+    "семья": ["дет", "семь", "ребен"],
+}
+
+BUDGET_HINTS = {
+    "эконом": ["эконом", "дешев", "бюджетно", "минимум", "недорого"],
+    "средний": ["средн", "нормальн", "баланс", "комфортно, но без люкса", "умеренн"],
+    "комфорт": ["комфорт", "премиум", "дорого", "красиво", "видовой отель", "хороший отель"],
+}
+
+
+@dataclass(slots=True)
+class TripRequest:
+    title: str
+    destination: str
+    origin: str
+    dates_text: str
+    days_count: int
+    group_size: int
+    budget_text: str
+    interests: list[str]
+    notes: str
+    source_prompt: str
+
+    @property
+    def interests_text(self) -> str:
+        return ", ".join(self.interests) if self.interests else "главные места, еда и спокойный ритм"
+
+
+@dataclass(slots=True)
+class TripPlan:
+    context_text: str
+    itinerary_text: str
+    logistics_text: str
+    stay_text: str
+    alternatives_text: str
+    budget_breakdown_text: str
+    budget_total_text: str
+
+
+@dataclass(slots=True)
+class DestinationProfile:
+    key: str
+    display_name: str
+    country: str
+    currency: str
+    best_season: str
+    vibe: str
+    quick_facts: list[str]
+    hotel_areas: list[str]
+    transport_notes: list[str]
+    alternatives: list[str]
+    place_groups: dict[str, list[str]]
+    transport_range: tuple[int, int]
+    lodging_per_night: tuple[int, int]
+    food_per_day: tuple[int, int]
+    local_per_day: tuple[int, int]
+    activity_per_trip: tuple[int, int]
+    aliases: tuple[str, ...] = ()
+
+
+DESTINATIONS: list[DestinationProfile] = [
+    DestinationProfile(
+        key="владивосток",
+        display_name="Владивосток",
+        country="Россия",
+        currency="RUB",
+        best_season="июнь–сентябрь для моря и островных выездов; май и октябрь — для спокойного городского темпа",
+        vibe="море, сопки, смотровые точки и сильная гастро-линия с морепродуктами",
+        quick_facts=[
+            "город рельефный: удобнее группировать точки по районам, а не бегать через весь день через весь город",
+            "даже летом стоит заложить запас на ветер и переменчивую погоду",
+            "если нужен день на природу, его лучше сразу отделять от плотного городского маршрута",
+        ],
+        hotel_areas=[
+            "центр — для первого знакомства, набережной и вечерних прогулок",
+            "район около набережной — если важны кафе, виды и быстрый доступ к центру",
+            "Русский остров / более тихая локация — если в приоритете природа и размеренный темп",
+        ],
+        transport_notes=[
+            "если едете издалека, базовый сценарий почти всегда начинается с самолета; сравнивайте ранний прилет и вечерний вылет",
+            "внутри города удобно сочетать пешие участки с такси; под остров и дальние точки полезен автомобиль",
+            "на день с Русским островом или видовыми точками лучше не ставить плотную вечернюю программу в центре",
+        ],
+        alternatives=[
+            "Хабаровск — если хочется более простую городскую логистику и короткую насыщенную поездку",
+            "Калининград — если нужен морской вайб и городская прогулка в более компактном формате",
+            "Сочи — если хочется море и природу, но с более мягким климатом и большим числом отелей",
+        ],
+        place_groups={
+            "default": [
+                "прогулка по центру и Спортивной набережной",
+                "смотровая точка на город и бухту",
+                "фуникулер и спокойный обзорный маршрут по историческому центру",
+                "Токаревский маяк или другой короткий выезд к воде",
+            ],
+            "природа": [
+                "Русский остров и день с видовыми остановками",
+                "маршрут по прибрежным точкам и смотровым площадкам",
+                "легкая прогулка по островной части и закат у воды",
+            ],
+            "еда": [
+                "ужин с морепродуктами и локальной кухней",
+                "рынок / гастро-точка с быстрым знакомством с дальневосточным меню",
+                "кофе-стоп и поздний ужин в живом городском районе",
+            ],
+            "история": [
+                "музейная точка по морской истории или истории города",
+                "короткий маршрут по старым кварталам и портовой истории",
+            ],
+            "город": [
+                "вечерний центр с огнями, лестницами и смотровыми площадками",
+                "район с кафе и прогулкой без жесткого тайминга",
+            ],
+        },
+        transport_range=(22000, 38000),
+        lodging_per_night=(2800, 5500),
+        food_per_day=(1800, 3200),
+        local_per_day=(500, 1100),
+        activity_per_trip=(2200, 5000),
+        aliases=("владик",),
+    ),
+    DestinationProfile(
+        key="санкт-петербург",
+        display_name="Санкт-Петербург",
+        country="Россия",
+        currency="RUB",
+        best_season="май–сентябрь для белых ночей и длинных прогулок; зимой хорош для музеев и спокойного городского сценария",
+        vibe="архитектура, музеи, вода и прогулки по слоям города",
+        quick_facts=[
+            "маршрут лучше собирать блоками по районам, иначе время уйдет на перемещения",
+            "погода меняется быстро, поэтому полезно иметь indoor-план на один из дней",
+            "вечерние прогулки работают лучше, если жилье находится недалеко от центра",
+        ],
+        hotel_areas=[
+            "центр / Невский — если нужен плотный первый визит",
+            "Петроградская сторона — если хочется более спокойного ритма и кафе",
+            "районы у воды — если нужен красивый вечерний маршрут",
+        ],
+        transport_notes=[
+            "для коротких поездок удобно прилетать или приезжать ранним утром, чтобы не терять первый день",
+            "внутри города лучше строить маршрут вокруг метро и пеших блоков",
+            "плотный музейный день не стоит смешивать с дальними выездами и длинными вечерними переходами",
+        ],
+        alternatives=[
+            "Калининград — если нужен более компактный городской ритм",
+            "Казань — если хочется сильной гастро-линии и города на 3–4 дня",
+            "Стамбул — если нужен более яркий контраст культур и плотный городской вайб",
+        ],
+        place_groups={
+            "default": [
+                "Невский и первый обзорный маршрут по центру",
+                "набережные и классическая прогулка по открыткам города",
+                "спокойный вечер у воды и по красивым улицам",
+                "одна большая архитектурная точка + соседний район без спешки",
+            ],
+            "природа": [
+                "парк / островной маршрут с длинной прогулкой",
+                "тихий зеленый блок с кофе и передышкой от центра",
+            ],
+            "еда": [
+                "гастро-маршрут по кафе и рынкам",
+                "вечер с локальной кухней и винным баром / коктейлями",
+            ],
+            "история": [
+                "музейный день с одним главным музеем и одной легкой дополнительной точкой",
+                "маршрут по дворцам, соборам и старым улицам",
+            ],
+            "город": [
+                "Петроградская сторона или другой район с атмосферой города без туристической гонки",
+                "вечерний маршрут по мостам и подсвеченным фасадам",
+            ],
+        },
+        transport_range=(6000, 18000),
+        lodging_per_night=(2500, 5200),
+        food_per_day=(1700, 3200),
+        local_per_day=(400, 900),
+        activity_per_trip=(1800, 5000),
+        aliases=("питер", "спб"),
+    ),
+    DestinationProfile(
+        key="казань",
+        display_name="Казань",
+        country="Россия",
+        currency="RUB",
+        best_season="май–сентябрь для прогулок и выездов; зимой хорош для короткого city break",
+        vibe="история, еда, религиозные и культурные слои в компактном формате",
+        quick_facts=[
+            "для 3–4 дней город раскрывается очень хорошо без перегруза",
+            "удобно сочетать исторический центр, гастрономию и один спокойный выезд",
+            "жилье в центре сильно упрощает короткую поездку",
+        ],
+        hotel_areas=[
+            "центр — если нужен быстрый доступ к главным точкам",
+            "район у набережной — если хотите более прогулочный сценарий",
+            "спокойный квартал у центра — если важнее тишина, чем вечерний шум",
+        ],
+        transport_notes=[
+            "на короткий срок лучше прилетать или приезжать максимально близко к началу дня",
+            "по центру удобно ходить пешком с короткими переездами",
+            "один насыщенный день лучше держать только под центр и гастро-точки",
+        ],
+        alternatives=[
+            "Нижний Новгород — если нужен другой исторический город на 2–3 дня",
+            "Санкт-Петербург — если хочется больше архитектуры и музеев",
+            "Стамбул — если нужен более сильный культурный контраст",
+        ],
+        place_groups={
+            "default": [
+                "Кремль и первый круг по центру",
+                "пешеходная улица и спокойная прогулка по главному маршруту",
+                "вечерняя набережная и мягкий городской ритм",
+            ],
+            "еда": [
+                "локальная кухня и гастро-точки с татарским акцентом",
+                "чайная / десертный блок и расслабленный вечер",
+            ],
+            "история": [
+                "старые кварталы, мечеть / храм и музейная точка",
+                "спокойный маршрут по культурным слоям города",
+            ],
+            "природа": [
+                "парк и прогулочный блок на полдня",
+                "тихая зеленая пауза между историческими точками",
+            ],
+            "город": [
+                "район с кафе и современной городской жизнью",
+                "вечерний маршрут без перегруза по красивым улицам",
+            ],
+        },
+        transport_range=(5000, 15000),
+        lodging_per_night=(2200, 4800),
+        food_per_day=(1500, 2800),
+        local_per_day=(350, 800),
+        activity_per_trip=(1200, 3500),
+        aliases=(),
+    ),
+    DestinationProfile(
+        key="калининград",
+        display_name="Калининград",
+        country="Россия",
+        currency="RUB",
+        best_season="май–сентябрь для городской прогулки и моря; межсезонье подходит для спокойного уикенда",
+        vibe="компактный город, европейский ритм, море и короткие выезды",
+        quick_facts=[
+            "лучше сразу решать, нужен ли день на побережье — это влияет на темп всей поездки",
+            "центр удобен для первого визита, но тихие кварталы дают более спокойное проживание",
+            "поездку легко сделать или очень расслабленной, или довольно насыщенной",
+        ],
+        hotel_areas=[
+            "центр — если хотите ходить пешком и не думать о логистике",
+            "тихий квартал рядом с центром — если нужен спокойный ночной режим",
+            "побережье или гибридный сценарий — если в приоритете море",
+        ],
+        transport_notes=[
+            "на 3–5 дней стоит заранее решить, хотите ли отдельный день на море или держите поездку городской",
+            "по городу удобен пеший сценарий с короткими переездами",
+            "если группа большая, выгоднее сразу планировать апартаменты и трансферы",
+        ],
+        alternatives=[
+            "Санкт-Петербург — если нужен более насыщенный городской слой",
+            "Сочи — если хочется больше природы и моря",
+            "Владивосток — если нужен более яркий морской характер и дальний маршрут",
+        ],
+        place_groups={
+            "default": [
+                "центральный прогулочный маршрут и первый обзор города",
+                "район с водой, кафе и неспешным ритмом",
+                "вечерняя прогулка по красивому кварталу",
+            ],
+            "природа": [
+                "день на побережье или короткий морской выезд",
+                "спокойный природный блок с закатной точкой",
+            ],
+            "еда": [
+                "рыбный / локальный ужин и городской гастро-маршрут",
+                "кофе и десертный блок в спокойном районе",
+            ],
+            "история": [
+                "исторический музейный слой и маршрут по старым кварталам",
+                "день с акцентом на архитектуру и локальную историю",
+            ],
+            "город": [
+                "район с атмосферой и современными кафе",
+                "медленная прогулка без гонки по обязательным точкам",
+            ],
+        },
+        transport_range=(7000, 18000),
+        lodging_per_night=(2500, 5200),
+        food_per_day=(1600, 3000),
+        local_per_day=(350, 900),
+        activity_per_trip=(1500, 3800),
+        aliases=(),
+    ),
+    DestinationProfile(
+        key="сочи",
+        display_name="Сочи",
+        country="Россия",
+        currency="RUB",
+        best_season="май–октябрь для моря и прогулок; межсезонье хорошо для мягкого отдыха и коротких выездов",
+        vibe="море, легкие выезды, прогулки и расслабленный темп",
+        quick_facts=[
+            "нужно заранее решить, что важнее: море, город или выезд в горы",
+            "в высокий сезон логистика и цены ощутимо плотнее, чем в межсезонье",
+            "насыщенный маршрут лучше собирать блоками по районам",
+        ],
+        hotel_areas=[
+            "центр — если нужен баланс прогулок и логистики",
+            "поближе к морю — если главная цель пляж и вечерняя набережная",
+            "тихий район / апартаменты — если важна пауза и спокойный ритм",
+        ],
+        transport_notes=[
+            "для 4–5 дней лучше выбирать один главный выезд, а не пытаться уместить все",
+            "если цель — море, не перегружайте середину дня длинными переездами",
+            "на группу из 4+ человек заранее продумайте трансфер и формат проживания",
+        ],
+        alternatives=[
+            "Калининград — если хочется более спокойного моря и города",
+            "Стамбул — если нужен городской ритм и еда вместо пляжного сценария",
+            "Владивосток — если хочется более яркого морского характера и видовых точек",
+        ],
+        place_groups={
+            "default": [
+                "набережная и мягкий вход в город",
+                "день с морем и прогулкой без спешки",
+                "вечерний маршрут по кафе и набережной",
+            ],
+            "природа": [
+                "один выезд в горный / природный блок",
+                "тихий маршрут к воде или зеленой точке",
+            ],
+            "еда": [
+                "гастро-вечер с локальной кухней",
+                "поздний завтрак и спокойный ресторанный блок",
+            ],
+            "город": [
+                "современный район с прогулкой и кофе",
+                "неплотный городской день с акцентом на отдых",
+            ],
+            "история": [
+                "одна культурная точка и прогулка по старому слою города",
+            ],
+        },
+        transport_range=(6000, 20000),
+        lodging_per_night=(2700, 6000),
+        food_per_day=(1700, 3200),
+        local_per_day=(450, 1000),
+        activity_per_trip=(1700, 4200),
+        aliases=(),
+    ),
+    DestinationProfile(
+        key="стамбул",
+        display_name="Стамбул",
+        country="Турция",
+        currency="TRY",
+        best_season="апрель–июнь и сентябрь–ноябрь для прогулок; летом маршрут лучше делать мягче из-за жары",
+        vibe="яркий городской контраст, еда, история, районы и длинные прогулки",
+        quick_facts=[
+            "город огромный, поэтому день лучше собирать вокруг одного-двух районов",
+            "перемещения съедают время, если прыгать между берегами без плана",
+            "для первого визита удобно держать жилье ближе к понятной транспортной связке",
+        ],
+        hotel_areas=[
+            "район с простой транспортной связью — для первого визита и короткой поездки",
+            "исторический центр — если хотите быть рядом с ключевыми точками, но готовы к большему потоку людей",
+            "более спокойный район с кафе — если нужен живой, но не слишком туристический ритм",
+        ],
+        transport_notes=[
+            "в день перелета и заселения лучше держать только один район и короткий вечерний маршрут",
+            "для 4–5 дней эффективнее делить поездку по берегам / районам, а не по отдельным точкам",
+            "обязательно держите запас по времени на дорогу и очереди в главных местах",
+        ],
+        alternatives=[
+            "Казань — если хочется яркого культурного слоя, но проще по логистике",
+            "Санкт-Петербург — если важнее архитектура и музеи в более знакомом формате",
+            "Сочи — если хочется мягче по темпу и больше отдыха",
+        ],
+        place_groups={
+            "default": [
+                "первый маршрут по главному историческому слою города",
+                "район с кафе и длинной прогулкой без жесткого тайминга",
+                "видовая точка и вечер с городской атмосферой",
+            ],
+            "еда": [
+                "гастро-маршрут с рынком / уличной едой и полноценным ужином",
+                "чай / кофе, сладкое и неспешный вечерний блок",
+            ],
+            "история": [
+                "день с историческими точками и музейным акцентом",
+                "спокойный маршрут по старым улицам и культовым зданиям",
+            ],
+            "город": [
+                "современный район с кафе, магазинами и вечерней жизнью",
+                "другой берег / район для смены ритма без гонки",
+            ],
+            "природа": [
+                "маршрут вдоль воды и расслабленный видовой день",
+            ],
+        },
+        transport_range=(18000, 35000),
+        lodging_per_night=(3500, 7000),
+        food_per_day=(2200, 3800),
+        local_per_day=(500, 1200),
+        activity_per_trip=(2200, 5500),
+        aliases=(),
+    ),
+]
+
+
+DEFAULT_PROFILE = DestinationProfile(
+    key="generic",
+    display_name="Новая поездка",
+    country="—",
+    currency="RUB",
+    best_season="зависит от направления; перед бронированием лучше отдельно проверить сезон и погоду",
+    vibe="новый город, базовые точки, местная еда и один спокойный выезд",
+    quick_facts=[
+        "маршрут лучше собирать районами, а не списком разрозненных мест",
+        "на поездку в 3–5 дней достаточно одного насыщенного и одного очень спокойного дня",
+        "если едете группой, полезно заранее согласовать один общий бюджетный сценарий",
+    ],
+    hotel_areas=[
+        "центр или район с хорошей логистикой — для первого визита",
+        "тихий квартал рядом с центром — если важнее сон и меньше шума",
+        "апартаменты для группы — если вас 4+ человека и нужен баланс бюджета",
+    ],
+    transport_notes=[
+        "удобнее прилетать или приезжать ближе к началу дня, чтобы не потерять первый блок",
+        "внутри города чаще всего выгоден сценарий: пешком + один вид локального транспорта",
+        "не стоит ставить самые дальние точки в день прилета и вылета",
+    ],
+    alternatives=[
+        "ближайший крупный город того же региона — если нужна проще логистика",
+        "более компактное направление на 3 дня — если бюджет ограничен",
+        "соседняя страна / другой город с тем же вайбом — если хочется контраста",
+    ],
+    place_groups={
+        "default": [
+            "исторический центр и первый обзорный круг",
+            "главная прогулочная улица или набережная",
+            "ключевая смотровая / архитектурная точка",
+        ],
+        "еда": [
+            "рынок / гастро-точка и знакомство с локальной кухней",
+            "вечерний ресторанный блок без спешки",
+        ],
+        "природа": [
+            "парк, вода или природная точка на полдня",
+            "закатная локация и спокойная прогулка",
+        ],
+        "история": [
+            "главный музей / старый квартал / важная культурная точка",
+            "маршрут по истории и архитектуре",
+        ],
+        "город": [
+            "современный район с локальной жизнью",
+            "спокойный вечерний маршрут по живому кварталу",
+        ],
+    },
+    transport_range=(8000, 20000),
+    lodging_per_night=(2300, 5000),
+    food_per_day=(1500, 2900),
+    local_per_day=(350, 850),
+    activity_per_trip=(1500, 3500),
+    aliases=(),
+)
+
+
+class TravelPlanner:
+    def parse_trip_request(self, text: str, *, fallback_title: str | None = None) -> TripRequest:
+        cleaned = self._normalize_spaces(text)
+        destination = self._extract_destination(cleaned)
+        if not destination:
+            raise ValueError(
+                "Не смог понять направление. Напиши запрос так: '/plan Хочу на 5 дней во Владивосток, нас 4, бюджет средний, любим море и еду'."
+            )
+
+        days_count = self._extract_days_count(cleaned)
+        group_size = self._extract_group_size(cleaned)
+        origin = self._extract_origin(cleaned)
+        dates_text = self._extract_dates(cleaned)
+        budget_text = self._extract_budget(cleaned)
+        interests = self._extract_interests(cleaned)
+
+        title = (fallback_title or "").strip() or f"{destination} • {days_count} дн. • {group_size} чел."
+
+        return TripRequest(
+            title=title,
+            destination=destination,
+            origin=origin or "не указано",
+            dates_text=dates_text,
+            days_count=days_count,
+            group_size=group_size,
+            budget_text=budget_text,
+            interests=interests or ["город", "еда"],
+            notes=cleaned,
+            source_prompt=cleaned,
+        )
+
+    def build_request_from_fields(
+        self,
+        *,
+        title: str,
+        destination: str,
+        origin: str,
+        dates_text: str,
+        days_count: int,
+        group_size: int,
+        budget_text: str,
+        interests_text: str,
+        notes: str,
+        source_prompt: str = "",
+    ) -> TripRequest:
+        destination_clean = (destination or "").strip()
+        if not destination_clean:
+            raise ValueError("Нужно указать направление поездки.")
+
+        interests = self._extract_interests(interests_text) or self._split_interests(interests_text)
+        return TripRequest(
+            title=(title or f"{destination_clean} • {days_count} дн.").strip(),
+            destination=self._display_destination(destination_clean),
+            origin=(origin or "не указано").strip(),
+            dates_text=(dates_text or "не указаны").strip(),
+            days_count=max(1, int(days_count or 3)),
+            group_size=max(1, int(group_size or 2)),
+            budget_text=(budget_text or "средний").strip(),
+            interests=interests or ["город", "еда"],
+            notes=(notes or "").strip(),
+            source_prompt=(source_prompt or notes or f"Поездка в {destination_clean}").strip(),
+        )
+
+    def generate_plan(self, request: TripRequest) -> TripPlan:
+        profile = self._find_profile(request.destination)
+        budget_level = self._detect_budget_level(request.budget_text)
+        context = self._build_context_text(profile, request)
+        itinerary = self._build_itinerary(profile, request)
+        logistics = self._build_logistics_text(profile, request)
+        stay = self._build_stay_text(profile, request)
+        alternatives = self._build_alternatives_text(profile, request)
+        budget_breakdown, budget_total = self._build_budget_text(profile, request, budget_level)
+        return TripPlan(
+            context_text=context,
+            itinerary_text=itinerary,
+            logistics_text=logistics,
+            stay_text=stay,
+            alternatives_text=alternatives,
+            budget_breakdown_text=budget_breakdown,
+            budget_total_text=budget_total,
+        )
+
+    def profile_for(self, destination: str) -> DestinationProfile:
+        return self._find_profile(destination)
+
+    @staticmethod
+    def _normalize_spaces(text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").replace("\n", " ")).strip()
+
+    def _find_profile(self, destination: str) -> DestinationProfile:
+        destination_lower = destination.strip().lower()
+        for profile in DESTINATIONS:
+            if profile.key == destination_lower:
+                return profile
+            if destination_lower == profile.display_name.lower():
+                return profile
+            if destination_lower in {alias.lower() for alias in profile.aliases}:
+                return profile
+        for profile in DESTINATIONS:
+            if profile.key in destination_lower or destination_lower in profile.key:
+                return profile
+            if any(alias.lower() in destination_lower for alias in profile.aliases):
+                return profile
+        generic = DEFAULT_PROFILE
+        return DestinationProfile(
+            key=generic.key,
+            display_name=self._display_destination(destination),
+            country=generic.country,
+            currency=generic.currency,
+            best_season=generic.best_season,
+            vibe=generic.vibe,
+            quick_facts=list(generic.quick_facts),
+            hotel_areas=list(generic.hotel_areas),
+            transport_notes=list(generic.transport_notes),
+            alternatives=list(generic.alternatives),
+            place_groups={key: list(value) for key, value in generic.place_groups.items()},
+            transport_range=generic.transport_range,
+            lodging_per_night=generic.lodging_per_night,
+            food_per_day=generic.food_per_day,
+            local_per_day=generic.local_per_day,
+            activity_per_trip=generic.activity_per_trip,
+            aliases=(),
+        )
+
+    def _extract_destination(self, text: str) -> str | None:
+        lowered = text.lower()
+        aliases: list[tuple[str, str]] = []
+        for profile in DESTINATIONS:
+            aliases.append((profile.key, profile.display_name))
+            for alias in profile.aliases:
+                aliases.append((alias, profile.display_name))
+        aliases.sort(key=lambda item: len(item[0]), reverse=True)
+        for alias, display in aliases:
+            if alias.lower() in lowered:
+                return display
+
+        match = re.search(
+            r"\b(?:в|во|на)\s+([A-Za-zА-Яа-яЁё\-]+(?:\s+[A-Za-zА-Яа-яЁё\-]+){0,2})",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        candidate = re.split(r"[,.;:!?]", match.group(1))[0].strip()
+        candidate = re.sub(r"\b(на|дней|дня|день|человека|человек|чел)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+        if not candidate:
+            return None
+        return self._display_destination(candidate)
+
+    @staticmethod
+    def _display_destination(text: str) -> str:
+        text = text.strip()
+        if not text:
+            return text
+        return " ".join(part[:1].upper() + part[1:] for part in text.split())
+
+    @staticmethod
+    def _extract_days_count(text: str) -> int:
+        patterns = [
+            r"\bна\s+(\d{1,2})\s*(?:дн(?:я|ей)?|сут(?:ок)?|ноч(?:ь|и|ей)?)",
+            r"\b(\d{1,2})\s*(?:дн(?:я|ей)?|сут(?:ок)?|ноч(?:ь|и|ей)?)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                value = int(match.group(1))
+                return max(1, min(value, 14))
+        return 3
+
+    @staticmethod
+    def _extract_group_size(text: str) -> int:
+        patterns = [
+            r"\bнас\s+(\d{1,2})\b",
+            r"\bмы\s+(\d{1,2})\b",
+            r"\b(\d{1,2})\s*(?:чел(?:овек)?|человека|человек)\b",
+            r"\bкомпан(?:ия|ией)\s+из\s+(\d{1,2})\b",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return max(1, min(int(match.group(1)), 20))
+        return 2
+
+    @staticmethod
+    def _extract_origin(text: str) -> str | None:
+        match = re.search(
+            r"\bиз\s+([A-Za-zА-Яа-яЁё\-]+(?:\s+[A-Za-zА-Яа-яЁё\-]+){0,2})",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        candidate = re.split(r"[,.;:!?]", match.group(1))[0].strip()
+        candidate = re.sub(r"\b(на|в|во)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
+        return candidate or None
+
+    @staticmethod
+    def _extract_dates(text: str) -> str:
+        direct = re.search(
+            r"\b\d{1,2}\s*(?:-|–|—|до)?\s*\d{0,2}\s*(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if direct:
+            return direct.group(0)
+
+        lowered = text.lower()
+        for word in RUS_MONTH_WORDS:
+            if word in lowered:
+                if word == "ма":
+                    continue
+                snippet_match = re.search(r"\b([А-Яа-яA-Za-z0-9\- ]{0,20}" + re.escape(word) + r"[А-Яа-яA-Za-z0-9\- ]{0,20})", text, flags=re.IGNORECASE)
+                if snippet_match:
+                    return snippet_match.group(1).strip(" ,.")
+        return "не указаны"
+
+    def _extract_budget(self, text: str) -> str:
+        lowered = text.lower()
+        range_match = re.search(
+            r"\b(?:бюджет|до|примерно|около)\s+([\d\s]+(?:к|тыс|тысяч|руб|₽|€|\$)?)",
+            lowered,
+        )
+        if range_match:
+            return range_match.group(0).strip()
+        for label, keywords in BUDGET_HINTS.items():
+            if any(keyword in lowered for keyword in keywords):
+                return label
+        return "средний"
+
+    def _extract_interests(self, text: str) -> list[str]:
+        lowered = text.lower()
+        result: list[str] = []
+        for interest, keywords in INTEREST_KEYWORDS.items():
+            if any(keyword in lowered for keyword in keywords):
+                result.append(interest)
+        return result
+
+    def _split_interests(self, text: str) -> list[str]:
+        raw_items = [item.strip() for item in re.split(r"[,;/]| и ", text or "")]
+        return [item for item in raw_items if item]
+
+    def _detect_budget_level(self, budget_text: str) -> str:
+        lowered = (budget_text or "").lower()
+        for label, keywords in BUDGET_HINTS.items():
+            if any(keyword in lowered for keyword in keywords):
+                return label
+        numbers = re.findall(r"\d+", lowered.replace(" ", ""))
+        if numbers:
+            first_value = int(numbers[0])
+            if first_value <= 40000:
+                return "эконом"
+            if first_value >= 120000:
+                return "комфорт"
+        return "средний"
+
+    def _build_context_text(self, profile: DestinationProfile, request: TripRequest) -> str:
+        lines = [
+            f"• Направление: {profile.display_name}, {profile.country}",
+            f"• Формат поездки: {profile.vibe}",
+            f"• Лучший сезон: {profile.best_season}",
+            f"• Валюта / базовая расчетная единица: {profile.currency}",
+        ]
+        for fact in profile.quick_facts[:2]:
+            lines.append(f"• Важно: {fact}")
+        return "\n".join(lines)
+
+    def _build_itinerary(self, profile: DestinationProfile, request: TripRequest) -> str:
+        days = max(1, min(request.days_count, 10))
+        queue = self._place_queue(profile, request.interests, days * 3)
+        day_headers = [
+            "Мягкий старт и знакомство",
+            "Главные места без перегруза",
+            "День с фокусом на интересы",
+            "Смена темпа и районов",
+            "Свободный блок и финальные точки",
+            "Запасной сценарий и спокойный ритм",
+            "Второй большой выезд / глубокий район",
+            "День без спешки",
+            "Финальный круг по любимым местам",
+            "Выезд и мягкое завершение",
+        ]
+
+        lines: list[str] = []
+        for day in range(days):
+            slots = queue[day * 3 : day * 3 + 3]
+            while len(slots) < 3:
+                slots.append("спокойная прогулка по району проживания и пауза без жесткого тайминга")
+            lines.append(f"День {day + 1}. {day_headers[min(day, len(day_headers) - 1)]}")
+            lines.append(f"• Утро: {slots[0]}")
+            lines.append(f"• День: {slots[1]}")
+            lines.append(f"• Вечер: {slots[2]}")
+            if day != days - 1:
+                lines.append("")
+        return "\n".join(lines)
+
+    def _place_queue(self, profile: DestinationProfile, interests: list[str], target_count: int) -> list[str]:
+        ordered_groups = ["default"]
+        ordered_groups.extend(interest for interest in interests if interest in profile.place_groups and interest not in ordered_groups)
+        ordered_groups.extend(group for group in ["город", "еда", "история", "природа", "default"] if group in profile.place_groups and group not in ordered_groups)
+
+        queue: list[str] = []
+        seen: set[str] = set()
+        round_index = 0
+        while len(queue) < target_count and round_index < 10:
+            for group_name in ordered_groups:
+                items = profile.place_groups.get(group_name, [])
+                if round_index < len(items):
+                    item = items[round_index]
+                    if item not in seen:
+                        queue.append(item)
+                        seen.add(item)
+                        if len(queue) >= target_count:
+                            break
+            round_index += 1
+        if len(queue) < target_count:
+            queue.extend(["локальная точка рядом с жильем и свободное время"] * (target_count - len(queue)))
+        return queue
+
+    def _build_logistics_text(self, profile: DestinationProfile, request: TripRequest) -> str:
+        lines = [f"• Базовая логика: {note}" for note in profile.transport_notes]
+        if request.origin != "не указано":
+            lines.append(
+                f"• Из {request.origin} проверьте минимум два сценария дороги: быстрый и самый выгодный. Для группы полезно сравнить общий трансфер и самостоятельный доезд."
+            )
+        else:
+            lines.append("• Город выезда не указан, поэтому транспорт считаю только как ориентир без live-цен и без выбора конкретного рейса.")
+        if request.days_count <= 3:
+            lines.append("• Поездка короткая: лучше держать один большой городской блок в день и не распыляться на дальние точки.")
+        elif request.days_count >= 5:
+            lines.append("• Поездка длиннее 5 дней: полезно оставить один полудень пустым под погоду, отдых или перенос маршрута.")
+        return "\n".join(lines)
+
+    def _build_stay_text(self, profile: DestinationProfile, request: TripRequest) -> str:
+        lines = []
+        primary_area = profile.hotel_areas[0]
+        if "спокойно" in request.interests and len(profile.hotel_areas) > 1:
+            primary_area = profile.hotel_areas[min(1, len(profile.hotel_areas) - 1)]
+        if "природа" in request.interests and len(profile.hotel_areas) > 2:
+            primary_area = profile.hotel_areas[2]
+        lines.append(f"• Базовый выбор: {primary_area}")
+        for area in profile.hotel_areas[1:3]:
+            if area != primary_area:
+                lines.append(f"• Альтернатива: {area}")
+        if request.group_size >= 4:
+            lines.append("• Для группы 4+ часто выгоднее апартаменты или семейный номер рядом с понятной логистикой, чем несколько случайных маленьких номеров.")
+        else:
+            lines.append("• Для 1–3 человек лучше держаться ближе к первой линии логистики, чтобы не терять время на дорогу до центра.")
+        return "\n".join(lines)
+
+    def _build_alternatives_text(self, profile: DestinationProfile, request: TripRequest) -> str:
+        lines = [f"• {item}" for item in profile.alternatives]
+        if self._detect_budget_level(request.budget_text) == "эконом":
+            lines.append("• Если бюджет жёсткий, выбирайте более компактное направление или сокращайте поездку на 1 день — так легче уложиться в проживание и локальные траты.")
+        if "природа" in request.interests:
+            lines.append("• Для природного сценария ищите направление, где природа доступна без длинных ежедневных переездов — это сильно экономит время и силы.")
+        return "\n".join(lines)
+
+    def _build_budget_text(self, profile: DestinationProfile, request: TripRequest, budget_level: str) -> tuple[str, str]:
+        multiplier = {
+            "эконом": 0.85,
+            "средний": 1.0,
+            "комфорт": 1.35,
+        }[budget_level]
+
+        nights = max(1, request.days_count - 1)
+        group_size = max(1, request.group_size)
+        shared_factor = 0.78 if group_size >= 2 else 1.0
+
+        lodging_low, lodging_high = self._scale_range(profile.lodging_per_night, multiplier * shared_factor * nights * group_size)
+        food_low, food_high = self._scale_range(profile.food_per_day, multiplier * request.days_count * group_size)
+        local_low, local_high = self._scale_range(profile.local_per_day, multiplier * request.days_count * group_size)
+        activities_low, activities_high = self._scale_range(profile.activity_per_trip, multiplier * group_size)
+
+        transport_line = "• Дорога: город выезда не указан — пока без учета транспорта."
+        transport_low = transport_high = 0
+        if request.origin != "не указано":
+            transport_low, transport_high = self._scale_range(profile.transport_range, multiplier * group_size)
+            transport_line = (
+                f"• Дорога из {request.origin}: {self._format_money(transport_low)} – {self._format_money(transport_high)}"
+                " (грубая оценка без live-цен)"
+            )
+
+        total_low = lodging_low + food_low + local_low + activities_low + transport_low
+        total_high = lodging_high + food_high + local_high + activities_high + transport_high
+
+        header = (
+            f"Ориентир на {group_size} чел. / {request.days_count} дн."
+            f" — сценарий '{budget_level}' без live-цен и без бронирований."
+        )
+        lines = [
+            header,
+            transport_line,
+            f"• Проживание: {self._format_money(lodging_low)} – {self._format_money(lodging_high)}",
+            f"• Еда: {self._format_money(food_low)} – {self._format_money(food_high)}",
+            f"• Локальный транспорт: {self._format_money(local_low)} – {self._format_money(local_high)}",
+            f"• Активности / входные билеты: {self._format_money(activities_low)} – {self._format_money(activities_high)}",
+            f"• Итого ориентир: {self._format_money(total_low)} – {self._format_money(total_high)}",
+        ]
+        total_line = f"{self._format_money(total_low)} – {self._format_money(total_high)}"
+        return "\n".join(lines), total_line
+
+    @staticmethod
+    def _scale_range(values: tuple[int, int], scale: float) -> tuple[int, int]:
+        low = int(math.floor(values[0] * scale / 100.0) * 100)
+        high = int(math.ceil(values[1] * scale / 100.0) * 100)
+        return low, high
+
+    @staticmethod
+    def _format_money(value: int) -> str:
+        return f"{value:,.0f}".replace(",", " ") + " ₽"
