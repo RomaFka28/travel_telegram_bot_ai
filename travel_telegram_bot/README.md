@@ -113,6 +113,7 @@ python app.py
    - `OPENROUTER_MODEL` (например `stepfun/step-3.5-flash:free`)
    - `DATABASE_PATH=/var/data/travel_bot.db`
 5. Включите **Persistent Disk** с mount path `/var/data`, чтобы SQLite не терялась при рестартах.
+6. Если Render не дал доступ к `/var/data`, бот автоматически переключится на локальный файл `travel_telegram_bot/data/travel_bot.db` и не упадёт на старте. В этом режиме база будет временной, пока не заработает Persistent Disk.
 
 ## Поведение в групповых чатах
 
