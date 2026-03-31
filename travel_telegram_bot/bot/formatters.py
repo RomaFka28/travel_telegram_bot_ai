@@ -159,6 +159,22 @@ class TripFormatter:
     def _has_destination(trip: dict) -> bool:
         return bool(normalized_search_value(trip.get("destination")))
 
+    @staticmethod
+    def _budget_class_label(budget_text: str) -> str:
+        lowered = (budget_text or "").lower()
+        if any(token in lowered for token in ("первый класс", "без ограничений", "не ограничен", "люкс", "премиум", "vip", "вип")):
+            return "Первый класс"
+        if any(token in lowered for token in ("эконом", "подешевле", "недорого", "дешево", "дёшево")):
+            return "Эконом"
+        digits = [int(value) for value in "".join(ch if ch.isdigit() else " " for ch in lowered).split()]
+        if digits:
+            amount = digits[0]
+            if amount <= 40000:
+                return "Эконом"
+            if amount >= 120000:
+                return "Первый класс"
+        return "Бизнес"
+
     def build_start_text(self) -> str:
         return (
             "Привет! Добавьте меня в чат поездки, включите авто-анализ в /settings и обсуждайте поездку обычными сообщениями.\n\n"
@@ -302,6 +318,7 @@ class TripFormatter:
         destination = normalized_search_value(trip.get("destination")) or "не указано"
         dates_text = normalized_search_value(trip.get("dates_text")) or "уточняется"
         budget_text = normalized_search_value(trip.get("budget_text")) or "не указан"
+        budget_class = self._budget_class_label(budget_text)
         readiness_text, checklist_text = self._planning_readiness(trip, int(trip["id"]))
         has_destination = self._has_destination(trip)
         sections = [
@@ -324,6 +341,7 @@ class TripFormatter:
             f"Когда: <b>{html.escape(dates_text)}</b>\n"
             f"Людей: <b>{int(trip['group_size'] or 0)}</b>\n"
             f"Бюджет: <b>{html.escape(budget_text)}</b>\n"
+            f"Класс поездки: <b>{html.escape(budget_class)}</b>\n"
             + self._detected_needs_line(trip)
             + f"\n\n{readiness_text}\n{html.escape(checklist_text)}"
             + f"\n\n<b>Коротко</b>\n{direction_block}"
@@ -393,6 +411,7 @@ class TripFormatter:
         origin = normalized_search_value(trip["origin"]) or "не указано"
         dates_text = normalized_search_value(trip["dates_text"]) or "не указаны"
         budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
+        budget_class = self._budget_class_label(budget_text)
         interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
         lines = [
             f"<b>🧾 {html.escape(trip['title'])}</b>",
@@ -402,6 +421,7 @@ class TripFormatter:
             f"⏱ Длительность: <b>{int(trip['days_count'] or 0)} дн.</b>",
             f"👥 Размер группы: <b>{int(trip['group_size'] or 0)} чел.</b>",
             f"💸 Бюджет: <b>{html.escape(budget_text)}</b>",
+            f"💼 Класс поездки: <b>{html.escape(budget_class)}</b>",
             f"🎯 Интересы: <b>{html.escape(interests_text)}</b>",
         ]
         if trip["source_prompt"]:
@@ -419,6 +439,7 @@ class TripFormatter:
         origin = normalized_search_value(trip["origin"]) or "не указано"
         dates_text = normalized_search_value(trip["dates_text"]) or "не указаны"
         budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
+        budget_class = self._budget_class_label(budget_text)
         interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
         has_destination = self._has_destination(trip)
         stay_preview = self._escape_block(
@@ -464,6 +485,7 @@ class TripFormatter:
             f"📅 Даты: <b>{html.escape(dates_text)}</b> · <b>{int(trip['days_count'] or 0)} дн.</b>\n"
             f"👥 Группа: <b>{int(trip['group_size'] or 0)} чел.</b>\n"
             f"💸 Целевой бюджет: <b>{html.escape(budget_text)}</b>\n"
+            f"💼 Класс поездки: <b>{html.escape(budget_class)}</b>\n"
             f"🎯 Интересы: <b>{html.escape(interests_text)}</b>"
             + self._detected_needs_line(trip)
             + "\n"
