@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-from travel_planner import TripPlan, TripRequest
+from travel_planner import BudgetInterpretation, TripPlan, TripRequest
 
 
 @dataclass(slots=True)
@@ -95,6 +95,39 @@ def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> d
     return payload
 
 
+def build_budget_interpretation_payload(config: OpenRouterConfig, text: str) -> dict:
+    system = (
+        "You classify a travel budget from casual user text for a Russian-speaking Telegram bot. "
+        "Return only valid JSON with keys: display_text, budget_class, mode, amount_value, confidence. "
+        "budget_class must be exactly one of: эконом, бизнес, первый класс. "
+        "mode must be exactly one of: ceiling, target, floor, approx, class_only, unlimited. "
+        "display_text must be short Russian text suitable for UI. "
+        "amount_value must be integer or null. confidence must be a number from 0 to 1. "
+        "Do not invent strict numbers if they are not in the text."
+    )
+    user = (
+        "Interpret this budget request from a user planning a trip:\n"
+        f"{text}\n\n"
+        "Examples:\n"
+        "- 'до 50000' => ceiling\n"
+        "- 'на 50000' => target\n"
+        "- 'от 50000' => floor\n"
+        "- 'подешевле' => эконом\n"
+        "- 'нормально, но без роскоши' => бизнес\n"
+        "- 'не ограничен' => первый класс / unlimited"
+    )
+    payload = {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 240,
+    }
+    return payload
+
+
 def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPlan:
     if not config.api_key:
         raise OpenRouterError("OPENROUTER_API_KEY is missing.")
@@ -148,4 +181,61 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
         alternatives_text=obj["alternatives_text"].strip(),
         budget_breakdown_text=obj["budget_breakdown_text"].strip(),
         budget_total_text=obj["budget_total_text"].strip(),
+    )
+
+
+def classify_budget_text(config: OpenRouterConfig, text: str) -> BudgetInterpretation:
+    if not config.api_key:
+        raise OpenRouterError("OPENROUTER_API_KEY is missing.")
+
+    payload = build_budget_interpretation_payload(config, text)
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url=config.base_url,
+        data=data,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=config.timeout_s) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
+        raise OpenRouterError(f"OpenRouter HTTP {exc.code}: {body or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise OpenRouterError(f"OpenRouter connection error: {exc}") from exc
+
+    try:
+        parsed = json.loads(raw)
+        content = parsed["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        raise OpenRouterError(f"Unexpected OpenRouter response: {raw[:5000]}") from exc
+
+    obj = _extract_json_object(content)
+    display_text = str(obj.get("display_text") or "").strip()
+    budget_class = str(obj.get("budget_class") or "").strip().lower()
+    mode = str(obj.get("mode") or "").strip().lower()
+    amount_value = obj.get("amount_value")
+    confidence = float(obj.get("confidence") or 0.0)
+    if budget_class not in {"эконом", "бизнес", "первый класс"}:
+        raise OpenRouterError(f"Unexpected budget_class: {budget_class}")
+    if mode not in {"ceiling", "target", "floor", "approx", "class_only", "unlimited"}:
+        raise OpenRouterError(f"Unexpected mode: {mode}")
+    if amount_value is not None:
+        try:
+            amount_value = int(amount_value)
+        except (TypeError, ValueError) as exc:
+            raise OpenRouterError("amount_value must be integer or null") from exc
+    if not display_text:
+        display_text = budget_class.title() if budget_class != "первый класс" else "Первый класс"
+    return BudgetInterpretation(
+        display_text=display_text,
+        budget_class=budget_class,
+        mode=mode,
+        amount_value=amount_value,
+        confidence=confidence,
     )

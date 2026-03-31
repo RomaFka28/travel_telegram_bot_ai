@@ -61,6 +61,15 @@ class TripPlan:
 
 
 @dataclass(slots=True)
+class BudgetInterpretation:
+    display_text: str
+    budget_class: str
+    mode: str
+    amount_value: int | None = None
+    confidence: float = 0.0
+
+
+@dataclass(slots=True)
 class DestinationProfile:
     key: str
     display_name: str
@@ -737,7 +746,14 @@ class TravelPlanner:
         return "не указаны"
 
     def _extract_budget(self, text: str) -> str:
-        lowered = text.lower()
+        return self.interpret_budget_text(text).display_text
+
+    def interpret_budget_text(self, text: str) -> BudgetInterpretation:
+        return self._interpret_budget_heuristic(text)
+
+    def _interpret_budget_heuristic(self, text: str) -> BudgetInterpretation:
+        lowered = (text or "").lower()
+
         if any(
             phrase in lowered
             for phrase in (
@@ -748,34 +764,77 @@ class TravelPlanner:
                 "бюджет не важен",
                 "любой бюджет",
                 "без лимита",
+                "дорого и красиво",
+                "на максимум",
             )
         ):
-            return "Первый класс"
-        if any(phrase in lowered for phrase in ("первый класс", "first class")):
-            return "Первый класс"
-        if any(phrase in lowered for phrase in ("бизнес", "business")):
-            return "Бизнес"
-        if any(phrase in lowered for phrase in ("эконом", "economy")):
-            return "Эконом"
-        exact_match = re.search(r"\bна\s+([\d\s]+)(?:\s*(?:руб|₽))?\b", lowered)
-        if exact_match:
-            return "на " + exact_match.group(1).strip() + " ₽"
-        from_match = re.search(r"\b(?:от|больше)\s+([\d\s]+)(?:\s*(?:руб|₽))?\b", lowered)
-        if from_match:
-            return "от " + from_match.group(1).strip() + " ₽"
-        range_match = re.search(
-            r"\b(?:бюджет|до|примерно|около)\s+([\d\s]+(?:к|тыс|тысяч|руб|₽|€|\$)?)",
-            lowered,
-        )
-        if range_match:
-            return range_match.group(0).strip()
+            return BudgetInterpretation("без ограничений", "первый класс", "unlimited", confidence=0.98)
+
+        if any(phrase in lowered for phrase in ("первый класс", "first class", "люкс", "премиум", "vip", "вип")):
+            return BudgetInterpretation("Первый класс", "первый класс", "class_only", confidence=0.95)
+        if any(phrase in lowered for phrase in ("бизнес", "business", "комфортно", "нормально, но без роскоши", "хороший отель")):
+            return BudgetInterpretation("Бизнес", "бизнес", "class_only", confidence=0.85)
+        if any(
+            phrase in lowered
+            for phrase in (
+                "эконом",
+                "economy",
+                "подешевле",
+                "дёшево",
+                "дешево",
+                "недорого",
+                "бюджетно",
+                "минимум трат",
+                "подешевле бы",
+            )
+        ):
+            return BudgetInterpretation("Эконом", "эконом", "class_only", confidence=0.9)
+
+        numeric = self._extract_budget_number(lowered)
+        if numeric is not None:
+            if re.search(r"\bдо\s+\d", lowered):
+                return BudgetInterpretation(f"до {self._format_budget_amount(numeric)} ₽", self._classify_budget_amount(numeric), "ceiling", numeric, 0.95)
+            if re.search(r"\bна\s+\d", lowered):
+                return BudgetInterpretation(f"на {self._format_budget_amount(numeric)} ₽", self._classify_budget_amount(numeric), "target", numeric, 0.95)
+            if re.search(r"\b(?:от|больше|минимум)\s+\d", lowered):
+                return BudgetInterpretation(f"от {self._format_budget_amount(numeric)} ₽", self._classify_budget_amount(numeric), "floor", numeric, 0.93)
+            if any(token in lowered for token in ("примерно", "около", "~", "где-то")):
+                return BudgetInterpretation(f"около {self._format_budget_amount(numeric)} ₽", self._classify_budget_amount(numeric), "approx", numeric, 0.92)
+            return BudgetInterpretation(f"около {self._format_budget_amount(numeric)} ₽", self._classify_budget_amount(numeric), "approx", numeric, 0.78)
+
         for label, keywords in BUDGET_HINTS.items():
             if any(keyword in lowered for keyword in keywords):
-                return label.title() if label != "первый класс" else "Первый класс"
-        plain_number = re.search(r"\b(\d[\d\s]{3,})\b", lowered)
-        if plain_number:
-            return "около " + plain_number.group(1).strip() + " ₽"
-        return "Бизнес"
+                display = label.title() if label != "первый класс" else "Первый класс"
+                return BudgetInterpretation(display, label, "class_only", confidence=0.7)
+
+        return BudgetInterpretation("Бизнес", "бизнес", "class_only", confidence=0.3)
+
+    @staticmethod
+    def _extract_budget_number(text: str) -> int | None:
+        normalized = (text or "").replace("\xa0", " ")
+        compact_k = re.search(r"\b(\d{1,3})\s*(к|k)\b", normalized, flags=re.IGNORECASE)
+        if compact_k:
+            return int(compact_k.group(1)) * 1000
+        thousands = re.search(r"\b(\d{1,3})\s*(?:тыс|тысяч)\b", normalized, flags=re.IGNORECASE)
+        if thousands:
+            return int(thousands.group(1)) * 1000
+        plain = re.search(r"\b(\d[\d\s]{3,})\b", normalized)
+        if plain:
+            digits = int(re.sub(r"\s+", "", plain.group(1)))
+            return digits
+        return None
+
+    @staticmethod
+    def _format_budget_amount(value: int) -> str:
+        return f"{int(value):,}".replace(",", " ")
+
+    @staticmethod
+    def _classify_budget_amount(value: int) -> str:
+        if value <= 40000:
+            return "эконом"
+        if value >= 120000:
+            return "первый класс"
+        return "бизнес"
 
     def _extract_interests(self, text: str) -> list[str]:
         lowered = text.lower()
@@ -790,24 +849,7 @@ class TravelPlanner:
         return [item for item in raw_items if item]
 
     def _detect_budget_level(self, budget_text: str) -> str:
-        lowered = (budget_text or "").lower()
-        if any(
-            phrase in lowered
-            for phrase in ("не ограничен", "не ограничена", "не ограничены", "без ограничений", "любой бюджет", "без лимита")
-        ):
-            return "первый класс"
-        for label, keywords in BUDGET_HINTS.items():
-            if any(keyword in lowered for keyword in keywords):
-                return label
-        numbers = re.findall(r"\d+", lowered.replace(" ", ""))
-        if numbers:
-            first_value = int(numbers[0])
-            if first_value <= 40000:
-                return "эконом"
-            if first_value >= 120000:
-                return "первый класс"
-            return "бизнес"
-        return "бизнес"
+        return self.interpret_budget_text(budget_text).budget_class
 
     def _build_context_text(
         self,
@@ -922,6 +964,7 @@ class TravelPlanner:
         return "\n".join(lines)
 
     def _build_budget_text(self, profile: DestinationProfile, request: TripRequest, budget_level: str) -> tuple[str, str]:
+        budget_meta = self.interpret_budget_text(request.budget_text)
         if profile.key == "generic" and profile.country not in {"—", "", None} and not is_ru_or_cis_country(profile.country):
             note = (
                 f"Ориентир по бюджету для {profile.display_name} лучше проверять по live-ценам в валюте {profile.currency}. "
@@ -968,10 +1011,11 @@ class TravelPlanner:
 
         header = (
             f"Ориентир на {group_size} чел. / {request.days_count} дн."
-            f" — сценарий '{budget_level}' без live-цен и без бронирований."
+            f" — класс '{budget_meta.display_text if budget_meta.mode == 'class_only' else budget_meta.budget_class.title()}' без live-цен и без бронирований."
         )
         lines = [
             header,
+            f"• Как понял бюджет: {budget_meta.display_text}",
             transport_line,
             f"• Проживание: {self._format_money(lodging_low, profile.currency)} – {self._format_money(lodging_high, profile.currency)}",
             f"• Еда: {self._format_money(food_low, profile.currency)} – {self._format_money(food_high, profile.currency)}",

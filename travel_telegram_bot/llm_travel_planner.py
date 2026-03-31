@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from openrouter_client import OpenRouterConfig, OpenRouterError, generate_trip_plan
-from travel_planner import TripPlan, TripRequest, TravelPlanner
+from openrouter_client import OpenRouterConfig, OpenRouterError, classify_budget_text, generate_trip_plan
+from travel_planner import BudgetInterpretation, TripPlan, TripRequest, TravelPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,23 @@ class LLMTravelPlanner(TravelPlanner):
             use_web_search=self._settings.openrouter_web_search,
         )
         return generate_trip_plan(config, request)
+
+    def interpret_budget_text(self, text: str) -> BudgetInterpretation:
+        heuristic = self._interpret_budget_heuristic(text)
+        if heuristic.confidence >= 0.9:
+            return heuristic
+        try:
+            config = OpenRouterConfig(
+                api_key=self._settings.openrouter_api_key,
+                model=self._settings.openrouter_model or "stepfun/step-3.5-flash:free",
+                use_web_search=False,
+            )
+            interpreted = classify_budget_text(config, text)
+            if interpreted.confidence >= heuristic.confidence:
+                return interpreted
+        except OpenRouterError:
+            logger.exception("LLM budget interpretation failed, using heuristic fallback")
+        return heuristic
 
     def generate_plan(self, request: TripRequest) -> TripPlan:
         try:
