@@ -5,6 +5,7 @@ from bot.formatters import TripFormatter
 from bot.handlers import BotHandlers
 from bot.trip_service import TripService
 from database import Database
+from housing_search import LinkOnlyHousingSearchProvider
 from travel_planner import TravelPlanner
 
 
@@ -105,7 +106,8 @@ def build_handlers(tmp_path) -> tuple[Database, BotHandlers]:
     planner = TravelPlanner()
     formatter = TripFormatter(database)
     service = TripService(database, planner)
-    return database, BotHandlers(database, planner, formatter, service)
+    housing_provider = LinkOnlyHousingSearchProvider()
+    return database, BotHandlers(database, planner, formatter, service, housing_provider)
 
 
 def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
@@ -226,6 +228,20 @@ def test_share_and_archive_keep_trip_history(tmp_path) -> None:
     assert len(all_trips) == 1
     assert all_trips[0]["status"] == "archived"
     assert "История сохранена" in archive_message.replies[-1]["text"]
+
+
+def test_hotels_command_returns_russian_housing_sources(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(chat_id=405)
+    create_context = DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])
+    asyncio.run(handlers.plan_command(create_update, create_context))
+
+    hotels_update, hotels_message = make_update(chat_id=405)
+    asyncio.run(handlers.hotels_command(hotels_update, DummyContext()))
+
+    assert "Ищу варианты" in hotels_message.replies[0]["text"]
+    assert "Островок" in hotels_message.replies[-1]["text"]
+    assert "Яндекс Путешествия" in hotels_message.replies[-1]["text"]
 
 
 def test_group_chat_analysis_uses_recent_messages_context(tmp_path) -> None:

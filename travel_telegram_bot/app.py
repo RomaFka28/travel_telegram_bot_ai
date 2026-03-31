@@ -29,6 +29,7 @@ from bot.trip_service import TripService
 from config import load_settings
 from database import Database
 from health_server import start_if_render
+from housing_search import build_housing_provider
 from llm_travel_planner import LLMPlannerSettings, LLMTravelPlanner
 from travel_planner import TravelPlanner
 
@@ -45,6 +46,7 @@ async def post_init(application) -> None:
         BotCommand("plan", "Создать поездку вручную"),
         BotCommand("newtrip", "Пошаговое создание поездки"),
         BotCommand("share", "Поделиться текущим планом"),
+        BotCommand("hotels", "Где искать жильё и варианты"),
         BotCommand("participants", "Статусы участников"),
         BotCommand("adddate", "Добавить вариант дат"),
         BotCommand("archive_trip", "Убрать активную поездку в архив"),
@@ -74,7 +76,11 @@ def build_application():
         planner = TravelPlanner()
     formatter = TripFormatter(database)
     service = TripService(database, planner)
-    handlers = BotHandlers(database, planner, formatter, service)
+    housing_provider = build_housing_provider(
+        playwright_enabled=settings.playwright_enabled,
+        timeout_ms=settings.playwright_timeout_ms,
+    )
+    handlers = BotHandlers(database, planner, formatter, service, housing_provider)
 
     app = (
         ApplicationBuilder()
@@ -105,6 +111,7 @@ def build_application():
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_command))
     app.add_handler(CommandHandler("share", handlers.share_command))
+    app.add_handler(CommandHandler("hotels", handlers.hotels_command))
     app.add_handler(CommandHandler("plan", handlers.plan_command))
     app.add_handler(CommandHandler("planai", handlers.plan_ai_command))
     app.add_handler(CommandHandler("trips", handlers.trips_command))

@@ -4,6 +4,7 @@ import html
 
 from bot.keyboards import STATUS_LABELS
 from database import Database
+from housing_search import HousingSearchResponse
 
 
 class TripFormatter:
@@ -55,6 +56,7 @@ class TripFormatter:
             "• /summary — текущий план\n"
             "• /status — отметить участие\n"
             "• /settings — включить или выключить авто-анализ\n"
+            "• /hotels — быстрый сценарий по жилью\n"
             "• /trips — история поездок\n"
             "• /help — короткая справка"
         )
@@ -70,6 +72,7 @@ class TripFormatter:
             "• <code>/summary</code> — сводка по активной поездке\n"
             "• <code>/status</code> — отметить участие\n"
             "• <code>/settings</code> — режим чата\n"
+            "• <code>/hotels</code> — жильё и подготовка к более точному поиску\n"
             "• <code>/trips</code> — история поездок\n"
             "• <code>/select_trip ID</code> — вернуть поездку из архива\n\n"
             "<b>Что бот делает сейчас</b>\n"
@@ -157,6 +160,25 @@ class TripFormatter:
             + f"\n\n<b>Где искать</b>\n{html.escape(useful_links)}"
             + "\n\nОткройте /summary, если нужен полный план."
         )
+
+    def build_housing_search_text(self, trip: dict, response: HousingSearchResponse) -> str:
+        lines = [
+            f"<b>Жильё для {html.escape(trip['destination'] or 'поездки')}</b>",
+            html.escape(response.summary),
+        ]
+        if response.results:
+            lines.append("")
+            lines.append("<b>Что открыть</b>")
+            for result in response.results[:5]:
+                lines.append(
+                    f"• <b>{html.escape(result.source)}</b>: {html.escape(result.title)}\n"
+                    f"  {html.escape(result.price_text)}\n"
+                    f"  {html.escape(result.url)}"
+                )
+        else:
+            lines.append("")
+            lines.append("Пока не нашёл вариантов, попробуйте позже или откройте /summary.")
+        return "\n".join(lines)
 
     def _build_brief_html(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)

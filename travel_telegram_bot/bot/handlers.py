@@ -23,6 +23,7 @@ from bot.keyboards import (
 )
 from bot.trip_service import TripService
 from database import Database
+from housing_search import HousingSearchProvider
 from llm_travel_planner import LLMTravelPlanner
 from travel_planner import TravelPlanner
 from weather_service import WeatherError, fetch_weather_summary
@@ -47,11 +48,13 @@ class BotHandlers:
         planner: TravelPlanner,
         formatter: TripFormatter,
         service: TripService,
+        housing_provider: HousingSearchProvider,
     ) -> None:
         self.db = database
         self.planner = planner
         self.formatter = formatter
         self.service = service
+        self.housing_provider = housing_provider
 
     @staticmethod
     def _display_name(update: Update) -> str:
@@ -425,6 +428,22 @@ class BotHandlers:
         await message.reply_text(
             "Отправьте эту ссылку другим участникам. По ней откроется текущий план и можно будет отметить участие:\n"
             f"{share_link}"
+        )
+
+    async def hotels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        trip = await self._get_active_trip_or_reply(update)
+        message = update.effective_message
+        if not trip or not message:
+            return
+        await message.reply_text("Ищу варианты и русские сценарии по жилью. Это может занять несколько секунд.")
+        response = await self.housing_provider.search(
+            destination=trip["destination"] or "",
+            dates_text=trip["dates_text"] or "",
+            group_size=int(trip["group_size"] or 2),
+        )
+        await message.reply_text(
+            self.formatter.build_housing_search_text(trip, response),
+            parse_mode=ParseMode.HTML,
         )
 
     async def trips_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -18,6 +18,8 @@ class Settings:
     openrouter_api_key: str = ""
     openrouter_model: str = "stepfun/step-3.5-flash:free"
     log_level: str = "INFO"
+    playwright_enabled: bool = False
+    playwright_timeout_ms: int = 12000
 
 
 def _resolve_database_path(database_path: str) -> str:
@@ -44,6 +46,8 @@ def load_settings() -> Settings:
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     openrouter_model = os.getenv("OPENROUTER_MODEL", "stepfun/step-3.5-flash:free").strip()
+    playwright_enabled = os.getenv("PLAYWRIGHT_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+    playwright_timeout_raw = os.getenv("PLAYWRIGHT_TIMEOUT_MS", "12000").strip()
 
     if not telegram_token:
         raise ValueError(
@@ -56,4 +60,6 @@ def load_settings() -> Settings:
         openrouter_api_key=openrouter_api_key,
         openrouter_model=openrouter_model or "stepfun/step-3.5-flash:free",
         log_level=log_level or "INFO",
+        playwright_enabled=playwright_enabled,
+        playwright_timeout_ms=int(playwright_timeout_raw or "12000"),
     )
