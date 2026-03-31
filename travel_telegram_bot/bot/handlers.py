@@ -132,6 +132,68 @@ class BotHandlers:
         )
 
     @staticmethod
+    def _build_plan_prompt_text() -> str:
+        return (
+            "Отправьте следующим сообщением свободное описание поездки.\n\n"
+            "Лучше сразу указать:\n"
+            "• куда хотите поехать\n"
+            "• сколько человек едет\n"
+            "• откуда вылет / выезд\n"
+            "• даты туда и обратно или примерный диапазон\n"
+            "• бюджет\n"
+            "• что вам интересно\n"
+            "• если билет нужен только туда, напишите: «в одну сторону» или «без обратного билета»\n\n"
+            "Пример:\n"
+            "Хочу поехать с друзьями во Владивосток на 5 дней. Нас 4, вылет из Новосибирска, "
+            "туда 12 июня, обратно 16 июня, бюджет средний, любим море и еду.\n\n"
+            "Пример в одну сторону:\n"
+            "Хочу в Стамбул один, вылет из Тбилиси 12 июня, билет в одну сторону, бюджет средний, "
+            "интересуют прогулки и еда."
+        )
+
+    async def _create_trip_from_text(self, update: Update, raw_text: str) -> bool:
+        message = update.effective_message
+        if not message:
+            return False
+        text = (raw_text or "").strip()
+        if not text:
+            await message.reply_text("Нужен текст поездки. После /plan отправьте описание следующим сообщением.")
+            return False
+
+        try:
+            request = self.planner.parse_trip_request(text)
+        except ValueError as exc:
+            await message.reply_text(str(exc))
+            await message.reply_text(self._build_plan_prompt_text())
+            return False
+
+        request.notes = ""
+        chat = update.effective_chat
+        user = update.effective_user
+        if not chat:
+            return False
+        replaced_trip = self.db.get_active_trip(chat.id) is not None
+
+        plan = self.planner.generate_plan(request)
+        payload = self.service._build_trip_payload(request, plan, notes_override="")
+        trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
+        self.db.set_selected_trip(chat.id, trip_id)
+        self.service._refresh_weather_for_trip(trip_id)
+
+        await message.reply_text(
+            self.formatter.build_trip_created_text(
+                replaced_trip=replaced_trip,
+                chat_type=getattr(chat, "type", None),
+            )
+        )
+        await message.reply_text(
+            self.formatter._build_summary_html(trip_id),
+            parse_mode=ParseMode.HTML,
+            reply_markup=participant_status_keyboard(trip_id),
+        )
+        return True
+
+    @staticmethod
     def _should_send_group_reply(context: ContextTypes.DEFAULT_TYPE, key: str, *, cooldown_seconds: int) -> bool:
         now = time.time()
         last = context.chat_data.get(key, 0)
@@ -189,7 +251,7 @@ class BotHandlers:
             self.db.set_selected_trip(chat.id, int(trip["id"]))
         if not trip and update.effective_message:
             await update.effective_message.reply_text(
-                "Пока нет активной поездки. Запусти /plan <запрос> или создай её пошагово через /newtrip."
+                "Пока нет активной поездки. Запустите /plan и отправьте описание следующим сообщением или создайте её пошагово через /newtrip."
             )
         return trip
 
@@ -435,6 +497,7 @@ class BotHandlers:
             dates_text=trip["dates_text"] or "не указаны",
             budget_text=trip["budget_text"] or "средний",
             group_size=int(trip["group_size"] or 1),
+            source_text=f"{trip['source_prompt'] or ''}\n{trip['notes'] or ''}",
         )
         self.db.update_trip_fields(int(trip["id"]), {"tickets_text": tickets_text})
         await update.effective_message.reply_text(tickets_text)
@@ -502,43 +565,13 @@ class BotHandlers:
     async def plan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
         if not context.args:
-            await update.effective_message.reply_text(
-                "Использование:\n"
-                "/plan Хочу поехать с друзьями на 5 дней во Владивосток, нас 4, из Новосибирска, бюджет средний, любим море и еду"
-            )
+            context.chat_data["pending_plan_prompt"] = True
+            await update.effective_message.reply_text(self._build_plan_prompt_text())
             return
 
         raw_text = " ".join(context.args).strip()
-        try:
-            request = self.planner.parse_trip_request(raw_text)
-        except ValueError as exc:
-            await update.effective_message.reply_text(str(exc))
-            return
-
-        request.notes = ""
-        chat = update.effective_chat
-        user = update.effective_user
-        if not chat:
-            return
-        replaced_trip = self.db.get_active_trip(chat.id) is not None
-
-        plan = self.planner.generate_plan(request)
-        payload = self.service._build_trip_payload(request, plan, notes_override="")
-        trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
-        self.db.set_selected_trip(chat.id, trip_id)
-        self.service._refresh_weather_for_trip(trip_id)
-
-        await update.effective_message.reply_text(
-            self.formatter.build_trip_created_text(
-                replaced_trip=replaced_trip,
-                chat_type=getattr(update.effective_chat, "type", None),
-            )
-        )
-        await update.effective_message.reply_text(
-            self.formatter._build_summary_html(trip_id),
-            parse_mode=ParseMode.HTML,
-            reply_markup=participant_status_keyboard(trip_id),
-        )
+        context.chat_data.pop("pending_plan_prompt", None)
+        await self._create_trip_from_text(update, raw_text)
 
     async def plan_ai_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not context.args:
@@ -855,6 +888,11 @@ class BotHandlers:
         )
 
     async def handle_trip_edit_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        pending_plan = context.chat_data.pop("pending_plan_prompt", False)
+        if pending_plan:
+            await self._create_trip_from_text(update, update.effective_message.text if update.effective_message else "")
+            return
+
         trip_id = context.user_data.pop("edit_trip_id", None)
         if not trip_id:
             return
@@ -913,6 +951,10 @@ class BotHandlers:
         if not message or not chat:
             return
         self._remember_chat_member(update)
+        pending_plan = context.chat_data.pop("pending_plan_prompt", False)
+        if pending_plan:
+            await self._create_trip_from_text(update, message.text or "")
+            return
         settings = self.db.get_or_create_settings(chat.id)
         if not self._bool_from_db(settings.get("autodraft_enabled")):
             return

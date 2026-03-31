@@ -81,6 +81,7 @@ class TripService:
                 dates_text=request.dates_text,
                 budget_text=request.budget_text,
                 group_size=request.group_size,
+                source_text=context_text,
             )
         if flight_results:
             structured["tickets"] = trim_results(flight_results)
@@ -98,6 +99,7 @@ class TripService:
                 dates_text=request.dates_text,
                 budget_text=request.budget_text,
                 group_size=request.group_size,
+                source_text=context_text,
             )
         links_text = build_links_text(
             request.destination,

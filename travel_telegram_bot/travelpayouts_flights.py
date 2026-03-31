@@ -56,6 +56,7 @@ class TravelpayoutsFlightProvider:
         dates_text: str,
         budget_text: str,
         group_size: int,
+        source_text: str = "",
     ) -> str:
         if not self.enabled:
             return ""
@@ -75,17 +76,20 @@ class TravelpayoutsFlightProvider:
             dates_text=dates_text,
             budget_text=budget_text,
             group_size=group_size,
+            source_text=source_text,
         )
         if not results:
             try:
                 origin_match = self._resolve_place(normalized_origin)
                 destination_match = self._resolve_place(normalized_destination)
                 date_range = _parse_dates_range(dates_text)
+                one_way = self._is_one_way(source_text, dates_text)
                 search_url = self._build_search_url(
                     origin_code=origin_match.code,
                     destination_code=destination_match.code,
                     start_date=date_range[0].isoformat() if date_range else None,
-                    end_date=date_range[1].isoformat() if date_range else None,
+                    end_date=date_range[1].isoformat() if date_range and not one_way else None,
+                    one_way=one_way,
                 )
             except TravelpayoutsError:
                 search_url = "https://www.aviasales.ru"
@@ -94,7 +98,13 @@ class TravelpayoutsFlightProvider:
                 f"\u041f\u043e\u0438\u0441\u043a / \u043f\u043e\u043a\u0443\u043f\u043a\u0430: {search_url}"
             )
 
-        lines = [f"Travelpayouts / Aviasales: \u0441\u0432\u0435\u0436\u0438\u0435 \u0446\u0435\u043d\u044b \u0434\u043b\u044f {normalized_origin} -> {normalized_destination}"]
+        one_way = self._is_one_way(source_text, dates_text)
+        route_label = (
+            f"Travelpayouts / Aviasales: \u0441\u0432\u0435\u0436\u0438\u0435 \u0446\u0435\u043d\u044b \u0432 \u043e\u0434\u043d\u0443 \u0441\u0442\u043e\u0440\u043e\u043d\u0443 \u0434\u043b\u044f {normalized_origin} -> {normalized_destination}"
+            if one_way
+            else f"Travelpayouts / Aviasales: \u0441\u0432\u0435\u0436\u0438\u0435 \u0446\u0435\u043d\u044b \u0434\u043b\u044f {normalized_origin} -> {normalized_destination}"
+        )
+        lines = [route_label]
         for index, result in enumerate(results[:3], start=1):
             parts = [result.price_text]
             if result.dates:
@@ -113,6 +123,7 @@ class TravelpayoutsFlightProvider:
         dates_text: str,
         budget_text: str,
         group_size: int,
+        source_text: str = "",
     ) -> list[TravelSearchResult]:
         if not self.enabled:
             return []
@@ -127,24 +138,28 @@ class TravelpayoutsFlightProvider:
             origin_match = self._resolve_place(normalized_origin)
             destination_match = self._resolve_place(normalized_destination)
             date_range = _parse_dates_range(dates_text)
+            one_way = self._is_one_way(source_text, dates_text)
             if date_range:
                 offers = self._search_prices_for_dates(
                     origin_code=origin_match.code,
                     destination_code=destination_match.code,
                     start_date=date_range[0].isoformat(),
                     end_date=date_range[1].isoformat(),
+                    one_way=one_way,
                 )
             else:
                 offers = self._search_latest_prices(
                     origin_code=origin_match.code,
                     destination_code=destination_match.code,
                     dates_text=dates_text,
+                    one_way=one_way,
                 )
             search_url = self._build_search_url(
                 origin_code=origin_match.code,
                 destination_code=destination_match.code,
                 start_date=date_range[0].isoformat() if date_range else None,
-                end_date=date_range[1].isoformat() if date_range else None,
+                end_date=date_range[1].isoformat() if date_range and not one_way else None,
+                one_way=one_way,
             )
         except TravelpayoutsError as exc:
             return [
@@ -182,10 +197,19 @@ class TravelpayoutsFlightProvider:
         destination_code: str,
         start_date: str | None,
         end_date: str | None,
+        one_way: bool = False,
     ) -> str:
         route_origin = origin_code.strip().upper()
         route_destination = destination_code.strip().upper()
-        if start_date and end_date:
+        if one_way:
+            query_params = {
+                "origin": route_origin,
+                "destination": route_destination,
+            }
+            if start_date:
+                query_params["depart_date"] = start_date
+            base_url = "https://www.aviasales.ru/search?" + urllib.parse.urlencode(query_params)
+        elif start_date and end_date:
             base_url = (
                 "https://www.aviasales.ru/search/"
                 f"{route_origin}{start_date[8:10]}{start_date[5:7]}"
@@ -209,6 +233,20 @@ class TravelpayoutsFlightProvider:
         if depart:
             return depart
         return ""
+
+    @staticmethod
+    def _is_one_way(source_text: str, dates_text: str) -> bool:
+        lowered = f"{source_text}\n{dates_text}".lower()
+        triggers = (
+            "в одну сторону",
+            "без обратного",
+            "без обратного билета",
+            "только туда",
+            "one way",
+            "one-way",
+            "oneway",
+        )
+        return any(trigger in lowered for trigger in triggers)
 
     @staticmethod
     def _format_single_date(value: str) -> str:
@@ -256,27 +294,36 @@ class TravelpayoutsFlightProvider:
         destination_code: str,
         start_date: str,
         end_date: str,
+        one_way: bool = False,
     ) -> list[FlightOffer]:
         params = [
             ("origin", origin_code),
             ("destination", destination_code),
             ("departure_at", start_date),
-            ("return_at", end_date),
             ("sorting", "price"),
             ("direct", "false"),
             ("currency", "rub"),
             ("limit", "5"),
             ("page", "1"),
-            ("one_way", "false"),
+            ("one_way", "true" if one_way else "false"),
             ("market", "ru"),
             ("token", self._api_key),
         ]
+        if not one_way:
+            params.insert(3, ("return_at", end_date))
         url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates?" + urllib.parse.urlencode(params)
         payload = self._get_json(url)
         data = payload.get("data") if isinstance(payload, dict) else None
         return self._parse_offers(data, origin_code, destination_code)
 
-    def _search_latest_prices(self, *, origin_code: str, destination_code: str, dates_text: str) -> list[FlightOffer]:
+    def _search_latest_prices(
+        self,
+        *,
+        origin_code: str,
+        destination_code: str,
+        dates_text: str,
+        one_way: bool = False,
+    ) -> list[FlightOffer]:
         params: list[tuple[str, str]] = [
             ("origin", origin_code),
             ("destination", destination_code),
@@ -284,7 +331,7 @@ class TravelpayoutsFlightProvider:
             ("page", "1"),
             ("limit", "5"),
             ("sorting", "price"),
-            ("one_way", "false"),
+            ("one_way", "true" if one_way else "false"),
             ("market", "ru"),
             ("token", self._api_key),
         ]

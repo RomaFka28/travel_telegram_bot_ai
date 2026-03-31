@@ -47,7 +47,7 @@ async def post_init(application) -> None:
         BotCommand("trips", "История поездок"),
         BotCommand("select_trip", "Вернуть поездку из истории"),
         BotCommand("delete_trip", "Удалить поездку навсегда"),
-        BotCommand("plan", "Создать поездку вручную"),
+        BotCommand("plan", "Начать ручной бриф поездки"),
         BotCommand("newtrip", "Пошаговое создание поездки"),
         BotCommand("hotels", "Где искать жильё и варианты"),
         BotCommand("participants", "Статусы участников"),

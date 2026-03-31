@@ -6,6 +6,7 @@ from bot.handlers import BotHandlers
 from bot.trip_service import TripService
 from database import Database
 from housing_search import LinkOnlyHousingSearchProvider
+from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from travel_result_models import TravelSearchResult
 
@@ -115,7 +116,16 @@ def build_handlers(tmp_path) -> tuple[Database, BotHandlers]:
 class FakeFlightProvider:
     enabled = True
 
-    def search_results(self, *, origin: str, destination: str, dates_text: str, budget_text: str, group_size: int) -> list[TravelSearchResult]:
+    def search_results(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        dates_text: str,
+        budget_text: str,
+        group_size: int,
+        source_text: str = "",
+    ) -> list[TravelSearchResult]:
         return [
             TravelSearchResult(
                 title=f"{origin} -> {destination}",
@@ -129,11 +139,69 @@ class FakeFlightProvider:
             )
         ]
 
-    def build_ticket_snapshot(self, *, origin: str, destination: str, dates_text: str, budget_text: str, group_size: int) -> str:
+    def build_ticket_snapshot(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        dates_text: str,
+        budget_text: str,
+        group_size: int,
+        source_text: str = "",
+    ) -> str:
         return (
             f"Travelpayouts / Aviasales: свежие цены для {origin} -> {destination}\n"
             f"1. 12 300 ₽/чел. (49 200 ₽ на {group_size} чел.), 2026-06-12 -> 2026-06-14, прямой, оценка 9/10, вписывается в средний бюджет"
         )
+
+
+def test_plan_command_without_args_starts_pending_flow(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    update, message = make_update(chat_id=1501, chat_type="private")
+    context = DummyContext()
+
+    asyncio.run(handlers.plan_command(update, context))
+
+    assert context.chat_data["pending_plan_prompt"] is True
+    assert "Отправьте следующим сообщением" in message.replies[-1]["text"]
+    assert "сколько человек" in message.replies[-1]["text"]
+    assert "в одну сторону" in message.replies[-1]["text"]
+
+
+def test_plan_pending_message_in_private_chat_creates_trip(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+    context.chat_data["pending_plan_prompt"] = True
+    update, message = make_update(
+        text="Хочу с друзьями в Казань на 3 дня, нас 4, из Томска, туда 12 июня, обратно 15 июня, бюджет средний",
+        chat_id=1502,
+        chat_type="private",
+    )
+
+    asyncio.run(handlers.handle_trip_edit_input(update, context))
+
+    trip = database.get_active_trip(1502)
+    assert trip is not None
+    assert trip["destination"] == "Казань"
+    assert "Собрал новый план" in message.replies[0]["text"]
+
+
+def test_plan_pending_message_in_group_chat_creates_trip(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+    context.chat_data["pending_plan_prompt"] = True
+    update, message = make_update(
+        text="Едем в Сочи вдвоем, вылет из Новосибирска, туда 12 июня, обратно 18 июня, бюджет комфорт",
+        chat_id=1503,
+        chat_type="group",
+    )
+
+    asyncio.run(handlers.handle_group_message(update, context))
+
+    trip = database.get_active_trip(1503)
+    assert trip is not None
+    assert trip["destination"] == "Сочи"
+    assert "Собрал новый план для этой группы" in message.replies[0]["text"]
 
 
 def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
@@ -586,3 +654,9 @@ def test_summary_shows_entry_requirements_for_international_trip(tmp_path) -> No
     assert "Въезд и документы" in rendered
     assert "Германия" in rendered
     assert "Франция" in rendered
+
+
+def test_travelpayouts_detects_one_way_text() -> None:
+    assert TravelpayoutsFlightProvider._is_one_way("Нужен билет в одну сторону", "12 июня") is True
+    assert TravelpayoutsFlightProvider._is_one_way("Без обратного билета", "12 июня") is True
+    assert TravelpayoutsFlightProvider._is_one_way("Туда 12 июня, обратно 18 июня", "12-18 июня") is False
