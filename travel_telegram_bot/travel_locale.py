@@ -54,7 +54,6 @@ EURO_COUNTRIES = {
     "Lithuania",
     "Luxembourg",
     "Croatia",
-    "Germany",
     "Германия",
     "Франция",
     "Испания",
