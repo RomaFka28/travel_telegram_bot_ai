@@ -19,9 +19,36 @@ def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="✏️ Изменить", callback_data=f"tripaction:{trip_id}:edit"),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"tripaction:{trip_id}:delete_confirm"),
         ],
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def trip_delete_confirm_keyboard(trip_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(text="🗑 Да, удалить навсегда", callback_data=f"tripaction:{trip_id}:delete_now"),
+            ],
+            [
+                InlineKeyboardButton(text="↩️ Отмена", callback_data=f"tripaction:{trip_id}:delete_cancel"),
+            ],
+        ]
+    )
+
+
+def trips_list_keyboard(trips: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for trip in trips[:10]:
+        trip_id = int(trip["id"])
+        rows.append(
+            [
+                InlineKeyboardButton(text=f"📂 Открыть {trip_id}", callback_data=f"tripaction:{trip_id}:open_trip"),
+                InlineKeyboardButton(text=f"🗑 Удалить {trip_id}", callback_data=f"tripaction:{trip_id}:delete_confirm"),
+            ]
+        )
+    return InlineKeyboardMarkup(rows)
 
 
 

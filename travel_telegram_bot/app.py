@@ -46,6 +46,7 @@ async def post_init(application) -> None:
         BotCommand("settings", "Авто-анализ и режим чата"),
         BotCommand("trips", "История поездок"),
         BotCommand("select_trip", "Вернуть поездку из истории"),
+        BotCommand("delete_trip", "Удалить поездку навсегда"),
         BotCommand("plan", "Создать поездку вручную"),
         BotCommand("newtrip", "Пошаговое создание поездки"),
         BotCommand("hotels", "Где искать жильё и варианты"),
@@ -128,6 +129,7 @@ def build_application():
     app.add_handler(CommandHandler("planai", handlers.plan_ai_command))
     app.add_handler(CommandHandler("trips", handlers.trips_command))
     app.add_handler(CommandHandler("select_trip", handlers.select_trip_command))
+    app.add_handler(CommandHandler("delete_trip", handlers.delete_trip_command))
     app.add_handler(CommandHandler("summary", handlers.summary_command))
     app.add_handler(CommandHandler("brief", handlers.brief_command))
     app.add_handler(CommandHandler("itinerary", handlers.itinerary_command))

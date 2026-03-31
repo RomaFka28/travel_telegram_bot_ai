@@ -529,3 +529,22 @@ def test_trips_and_select_trip_commands_restore_archived_trip(tmp_path) -> None:
     assert active_trip is not None
     assert active_trip["id"] == first_trip["id"]
     assert "снова активна" in select_message.replies[0]["text"]
+
+
+def test_delete_trip_command_removes_archived_trip(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+
+    first_update, _ = make_update(chat_id=607)
+    asyncio.run(handlers.plan_command(first_update, DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])))
+
+    first_trip = database.get_active_trip(607)
+    assert first_trip is not None
+
+    second_update, _ = make_update(chat_id=607)
+    asyncio.run(handlers.plan_command(second_update, DummyContext(args=["Хочу", "в", "Сочи", "на", "4", "дня"])))
+
+    delete_update, delete_message = make_update(chat_id=607)
+    asyncio.run(handlers.delete_trip_command(delete_update, DummyContext(args=[str(first_trip["id"])])))
+
+    assert database.get_trip_by_id(int(first_trip["id"])) is None
+    assert "удалена навсегда" in delete_message.replies[-1]["text"].lower()

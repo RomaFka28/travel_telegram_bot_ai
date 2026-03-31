@@ -16,9 +16,11 @@ from bot.keyboards import (
     date_vote_keyboard,
     participant_status_keyboard,
     settings_keyboard,
+    trip_delete_confirm_keyboard,
     trip_budget_keyboard,
     trip_days_keyboard,
     trip_group_size_keyboard,
+    trips_list_keyboard,
     trip_skip_keyboard,
 )
 from bot.trip_service import TripService
@@ -460,9 +462,11 @@ class BotHandlers:
         chat = update.effective_chat
         if not chat:
             return
+        trips = self.db.list_trips(chat.id)
         await update.effective_message.reply_text(
             self.formatter.build_trip_list_text(chat.id),
             parse_mode=ParseMode.HTML,
+            reply_markup=trips_list_keyboard(trips) if trips else None,
         )
 
     async def select_trip_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -999,8 +1003,8 @@ class BotHandlers:
             return
 
         trip = self.db.get_trip_by_id(trip_id)
-        if not trip or trip["status"] != "active":
-            await query.answer("\u042d\u0442\u0430 \u043f\u043e\u0435\u0437\u0434\u043a\u0430 \u0443\u0436\u0435 \u043d\u0435\u0430\u043a\u0442\u0438\u0432\u043d\u0430.", show_alert=True)
+        if not trip:
+            await query.answer("\u042d\u0442\u0430 \u043f\u043e\u0435\u0437\u0434\u043a\u0430 \u0443\u0436\u0435 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u0430.", show_alert=True)
             return
 
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
@@ -1017,6 +1021,60 @@ class BotHandlers:
             self.db.set_selected_trip(chat.id, trip_id)
 
         try:
+            if action in {"open_trip", "delete_confirm", "delete_cancel", "delete_now"}:
+                if action == "open_trip":
+                    activated = self.db.activate_trip(int(trip["chat_id"]), trip_id)
+                    if not activated:
+                        await query.answer("Не удалось открыть поездку.", show_alert=True)
+                        return
+                    refreshed_trip = self.db.get_trip_by_id(trip_id)
+                    if query.message and refreshed_trip:
+                        await query.message.reply_text(f"Поездка {trip_id} снова активна.")
+                        await query.message.reply_text(
+                            self.formatter._build_summary_html(trip_id),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=participant_status_keyboard(trip_id),
+                        )
+                    await query.answer("Поездка открыта.")
+                    return
+
+                if action == "delete_confirm":
+                    if query.message:
+                        await query.edit_message_text(
+                            text=self.formatter.build_trip_delete_confirm_text(trip),
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=trip_delete_confirm_keyboard(trip_id),
+                        )
+                    await query.answer("Нужно подтверждение.")
+                    return
+
+                if action == "delete_cancel":
+                    if query.message:
+                        if trip["status"] == "active":
+                            await query.edit_message_text(
+                                text=self.formatter._build_summary_html(trip_id),
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=participant_status_keyboard(trip_id),
+                            )
+                        else:
+                            await query.edit_message_text("Удаление отменено. Откройте /trips, чтобы продолжить работу с архивом.")
+                    await query.answer("Удаление отменено.")
+                    return
+
+                if action == "delete_now":
+                    deleted = self.db.delete_trip(int(trip["chat_id"]), trip_id)
+                    if not deleted:
+                        await query.answer("Не удалось удалить поездку.", show_alert=True)
+                        return
+                    if query.message:
+                        await query.edit_message_text("Поездка удалена навсегда.")
+                    await query.answer("Поездка удалена.")
+                    return
+
+            if trip["status"] != "active":
+                await query.answer("\u042d\u0442\u0430 \u043f\u043e\u0435\u0437\u0434\u043a\u0430 \u0443\u0436\u0435 \u043d\u0435\u0430\u043a\u0442\u0438\u0432\u043d\u0430.", show_alert=True)
+                return
+
             if action in {"going", "interested", "not_going"}:
                 self._set_participant_status(trip_id, update, action)
                 await query.answer(self.formatter.build_status_updated_text(action))
@@ -1035,7 +1093,6 @@ class BotHandlers:
                     elapsed_ms=int((time.perf_counter() - started_at) * 1000),
                 )
                 return
-
 
             if action == "edit":
                 context.user_data["edit_trip_id"] = trip_id
@@ -1213,6 +1270,26 @@ class BotHandlers:
             )
         else:
             await update.effective_message.reply_text("Сейчас нет активной поездки.")
+
+    async def delete_trip_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat = update.effective_chat
+        message = update.effective_message
+        if not chat or not message:
+            return
+        if not context.args:
+            await message.reply_text("Использование: /delete_trip 12")
+            return
+        try:
+            trip_id = int(context.args[0])
+        except ValueError:
+            await message.reply_text("Нужен числовой ID поездки. Посмотрите его через /trips.")
+            return
+
+        deleted = self.db.delete_trip(chat.id, trip_id)
+        if deleted:
+            await message.reply_text(f"Поездка {trip_id} удалена навсегда.")
+        else:
+            await message.reply_text("Не удалось удалить поездку. Проверьте ID через /trips.")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         if isinstance(update, Update):

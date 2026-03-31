@@ -131,3 +131,12 @@ def test_chat_member_tracking_counts_known_people(tmp_path) -> None:
     database.upsert_chat_member(chat_id=15, user_id=1, username="u1", full_name="User One")
 
     assert database.count_chat_members(15) == 2
+
+
+def test_delete_trip_removes_trip_completely(tmp_path) -> None:
+    database = Database(str(tmp_path / "delete.db"))
+    database.init_db()
+
+    trip_id = database.create_trip(chat_id=16, created_by=1, payload=_sample_payload("Казань"))
+    assert database.delete_trip(16, trip_id) is True
+    assert database.get_trip_by_id(trip_id) is None

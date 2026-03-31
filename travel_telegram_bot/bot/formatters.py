@@ -246,8 +246,15 @@ class TripFormatter:
                 f"\n  {destination}, {dates_text}"
             )
         lines.append("")
-        lines.append("Чтобы сделать поездку активной, используйте <code>/select_trip ID</code>.")
+        lines.append("Можно открыть поездку или удалить её кнопками ниже.")
         return "\n".join(lines)
+
+    @staticmethod
+    def build_trip_delete_confirm_text(trip: dict) -> str:
+        return (
+            f"Удалить поездку <b>{html.escape(trip['title'])}</b> навсегда?\n"
+            "Это действие удалит её из активных и из архива без возможности восстановления."
+        )
 
     def build_group_clarifying_question(self) -> str:
         return "Похоже, вы обсуждаете поездку. Куда хотите поехать?"

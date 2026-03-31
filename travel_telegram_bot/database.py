@@ -535,6 +535,37 @@ class Database:
             self.set_selected_trip(chat_id, trip_id)
         return activated
 
+    def delete_trip(self, chat_id: int, trip_id: int) -> bool:
+        trip = self.get_trip_by_id(trip_id)
+        if not trip or int(trip["chat_id"]) != chat_id:
+            return False
+
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM trips WHERE id = %s AND chat_id = %s",
+                        (trip_id, chat_id),
+                    )
+                    deleted = cur.rowcount > 0
+            if deleted:
+                selected_trip = self.get_selected_trip(chat_id)
+                if selected_trip and int(selected_trip["id"]) == trip_id:
+                    self.set_selected_trip(chat_id, None)
+            return deleted
+
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM trips WHERE id = ? AND chat_id = ?",
+                (trip_id, chat_id),
+            )
+            deleted = cursor.rowcount > 0
+        if deleted:
+            selected_trip = self.get_selected_trip(chat_id)
+            if selected_trip and int(selected_trip["id"]) == trip_id:
+                self.set_selected_trip(chat_id, None)
+        return deleted
+
     def update_trip_fields(self, trip_id: int, updates: dict[str, Any]) -> None:
         safe_updates = {key: value for key, value in updates.items() if key in EDITABLE_TRIP_FIELDS}
         if not safe_updates:
