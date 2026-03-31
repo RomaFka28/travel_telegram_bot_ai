@@ -1,6 +1,7 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
+from datetime import datetime
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -73,7 +74,18 @@ class TravelpayoutsFlightProvider:
             group_size=group_size,
         )
         if not results:
-            search_url = self._build_search_url(origin=origin, destination=destination, start_date=None, end_date=None)
+            try:
+                origin_match = self._resolve_place(origin)
+                destination_match = self._resolve_place(destination)
+                date_range = _parse_dates_range(dates_text)
+                search_url = self._build_search_url(
+                    origin_code=origin_match.code,
+                    destination_code=destination_match.code,
+                    start_date=date_range[0].isoformat() if date_range else None,
+                    end_date=date_range[1].isoformat() if date_range else None,
+                )
+            except TravelpayoutsError:
+                search_url = "https://www.aviasales.ru"
             return (
                 f"\u0411\u0438\u043b\u0435\u0442\u044b: Travelpayouts \u043f\u043e\u043a\u0430 \u043d\u0435 \u0432\u0435\u0440\u043d\u0443\u043b \u0441\u0432\u0435\u0436\u0438\u0445 \u0446\u0435\u043d \u043f\u043e \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044e {origin} -> {destination}.\n"
                 f"\u041f\u043e\u0438\u0441\u043a / \u043f\u043e\u043a\u0443\u043f\u043a\u0430: {search_url}"
@@ -86,11 +98,8 @@ class TravelpayoutsFlightProvider:
                 parts.append(result.dates)
             if result.note:
                 parts.append(result.note)
-            if result.budget_fit:
-                parts.append(result.budget_fit)
-            lines.append(f"{index}. {', '.join(parts)}".replace(",", " "))
+            lines.append(f"{index}. {' • '.join(parts)}")
         lines.append(f"\u041f\u043e\u0438\u0441\u043a / \u043f\u043e\u043a\u0443\u043f\u043a\u0430: {results[0].url}")
-        lines.append("\u0426\u0435\u043d\u044b Travelpayouts \u043a\u044d\u0448\u0438\u0440\u0443\u044e\u0442\u0441\u044f Aviasales, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u044d\u0442\u043e \u043b\u0443\u0447\u0448\u0438\u0439 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0439 \u0431\u044b\u0441\u0442\u0440\u044b\u0439 \u043e\u0440\u0438\u0435\u043d\u0442\u0438\u0440 \u043d\u0430 \u0434\u0430\u0442\u044b \u0438\u0437 \u0447\u0430\u0442\u0430.")
         return "\n".join(lines)
 
     def search_results(
@@ -127,8 +136,8 @@ class TravelpayoutsFlightProvider:
                     dates_text=dates_text,
                 )
             search_url = self._build_search_url(
-                origin=origin,
-                destination=destination,
+                origin_code=origin_match.code,
+                destination_code=destination_match.code,
                 start_date=date_range[0].isoformat() if date_range else None,
                 end_date=date_range[1].isoformat() if date_range else None,
             )
@@ -137,7 +146,7 @@ class TravelpayoutsFlightProvider:
                 TravelSearchResult(
                     title=f"\u0410\u0432\u0438\u0430\u0431\u0438\u043b\u0435\u0442\u044b {origin} -> {destination}",
                     price_text="\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0446\u0435\u043d\u044b \u043f\u0440\u044f\u043c\u043e \u0441\u0435\u0439\u0447\u0430\u0441.",
-                    url=self._build_search_url(origin=origin, destination=destination, start_date=None, end_date=None),
+                    url="https://www.aviasales.ru",
                     source="Travelpayouts / Aviasales",
                     note=f"\u041e\u0448\u0438\u0431\u043a\u0430 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430: {exc}",
                 )
@@ -145,19 +154,17 @@ class TravelpayoutsFlightProvider:
 
         results: list[TravelSearchResult] = []
         for offer in offers[:3]:
-            budget_fit = self._budget_fit_text(offer.value, budget_text)
             transfers = "\u043f\u0440\u044f\u043c\u043e\u0439" if offer.number_of_changes == 0 else f"{offer.number_of_changes} \u043f\u0435\u0440\u0435\u0441."
-            total = offer.value * max(1, group_size)
             score = self._score_offer(offer.value, offer.number_of_changes, budget_text)
             results.append(
                 TravelSearchResult(
                     title=f"{origin_match.name} -> {destination_match.name}",
-                    price_text=f"{offer.value:,} \u20bd/\u0447\u0435\u043b. ({total:,} \u20bd \u043d\u0430 {max(1, group_size)} \u0447\u0435\u043b.)".replace(",", " "),
+                    price_text=f"{offer.value:,} \u20bd/\u0447\u0435\u043b.".replace(",", " "),
                     url=search_url,
                     source="Travelpayouts / Aviasales",
                     score=score,
-                    budget_fit=budget_fit,
-                    dates=f"{offer.depart_date} -> {offer.return_date or 'one-way'}",
+                    budget_fit="",
+                    dates=self._format_offer_dates(offer.depart_date, offer.return_date),
                     note=f"{transfers}, \u043e\u0446\u0435\u043d\u043a\u0430 {score}/10",
                 )
             )
@@ -166,30 +173,49 @@ class TravelpayoutsFlightProvider:
     def _build_search_url(
         self,
         *,
-        origin: str,
-        destination: str,
+        origin_code: str,
+        destination_code: str,
         start_date: str | None,
         end_date: str | None,
     ) -> str:
-        encoded_destination = urllib.parse.quote(destination)
-        encoded_origin = urllib.parse.quote(origin)
+        route_origin = origin_code.strip().upper()
+        route_destination = destination_code.strip().upper()
         if start_date and end_date:
             base_url = (
                 "https://www.aviasales.ru/search/"
-                f"{encoded_origin}{start_date[8:10]}{start_date[5:7]}"
-                f"{encoded_destination}{end_date[8:10]}{end_date[5:7]}1"
+                f"{route_origin}{start_date[8:10]}{start_date[5:7]}"
+                f"{route_destination}{end_date[8:10]}{end_date[5:7]}1"
             )
         else:
-            base_url = (
-                "https://www.aviasales.ru/search?"
-                + urllib.parse.urlencode({"origin": origin, "destination": destination})
-            )
+            base_url = f"https://www.aviasales.ru/search/{route_origin}{route_destination}1"
         if self._partner_links and self._partner_links.enabled:
             try:
-                return self._partner_links.convert(base_url, sub_id=f"{origin}-{destination}")
+                return self._partner_links.convert(base_url, sub_id=f"{route_origin}-{route_destination}")
             except Exception:
                 return base_url
         return base_url
+
+    @staticmethod
+    def _format_offer_dates(depart_date: str, return_date: str) -> str:
+        depart = TravelpayoutsFlightProvider._format_single_date(depart_date)
+        back = TravelpayoutsFlightProvider._format_single_date(return_date)
+        if depart and back:
+            return f"{depart} - {back}"
+        if depart:
+            return depart
+        return ""
+
+    @staticmethod
+    def _format_single_date(value: str) -> str:
+        raw = (value or "").strip()
+        if not raw:
+            return ""
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+            return parsed.strftime("%d.%m")
+        except ValueError:
+            return raw[:10]
 
     def _resolve_place(self, term: str) -> PlaceMatch:
         params = [
