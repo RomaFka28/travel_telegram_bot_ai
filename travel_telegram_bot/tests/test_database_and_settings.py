@@ -1,0 +1,100 @@
+from database import Database
+from travel_planner import TravelPlanner
+
+
+def _sample_payload(destination: str = "Казань") -> dict[str, object]:
+    planner = TravelPlanner()
+    request = planner.build_request_from_fields(
+        title=f"{destination} • 3 дн. • 2 чел.",
+        destination=destination,
+        origin="Москва",
+        dates_text="июнь",
+        days_count=3,
+        group_size=2,
+        budget_text="средний",
+        interests_text="еда, прогулки",
+        notes="",
+        source_prompt=f"Поездка в {destination}",
+    )
+    plan = planner.generate_plan(request)
+    return {
+        "title": request.title,
+        "destination": request.destination,
+        "origin": request.origin,
+        "dates_text": request.dates_text,
+        "days_count": request.days_count,
+        "group_size": request.group_size,
+        "budget_text": request.budget_text,
+        "interests_text": request.interests_text,
+        "notes": request.notes,
+        "source_prompt": request.source_prompt,
+        "context_text": plan.context_text,
+        "itinerary_text": plan.itinerary_text,
+        "logistics_text": plan.logistics_text,
+        "stay_text": plan.stay_text,
+        "alternatives_text": plan.alternatives_text,
+        "budget_breakdown_text": plan.budget_breakdown_text,
+        "budget_total_text": plan.budget_total_text,
+    }
+
+
+def test_create_trip_archives_previous_without_deleting_history(tmp_path) -> None:
+    database = Database(str(tmp_path / "history.db"))
+    database.init_db()
+
+    first_trip_id = database.create_trip(chat_id=7, created_by=1, payload=_sample_payload("Казань"))
+    second_trip_id = database.create_trip(chat_id=7, created_by=1, payload=_sample_payload("Сочи"))
+
+    active_trip = database.get_active_trip(7)
+    all_trips = database.list_trips(7)
+
+    assert active_trip is not None
+    assert active_trip["id"] == second_trip_id
+    assert len(all_trips) == 2
+    archived_trip = next(trip for trip in all_trips if trip["id"] == first_trip_id)
+    assert archived_trip["status"] == "archived"
+
+
+def test_archive_active_trip_keeps_trip_in_database(tmp_path) -> None:
+    database = Database(str(tmp_path / "archive.db"))
+    database.init_db()
+
+    trip_id = database.create_trip(chat_id=11, created_by=1, payload=_sample_payload("Владивосток"))
+    assert database.archive_active_trip(11) is True
+
+    archived_trip = database.get_trip_by_id(trip_id)
+    assert archived_trip is not None
+    assert archived_trip["status"] == "archived"
+    assert database.get_active_trip(11) is None
+
+
+def test_chat_settings_include_autodraft_toggle(tmp_path) -> None:
+    database = Database(str(tmp_path / "settings.db"))
+    database.init_db()
+
+    settings = database.get_or_create_settings(42)
+    assert bool(settings["reminders_enabled"]) is True
+    assert bool(settings["autodraft_enabled"]) is True
+
+    settings = database.toggle_autodraft(42)
+    assert bool(settings["autodraft_enabled"]) is False
+
+    settings = database.toggle_reminders(42)
+    assert bool(settings["reminders_enabled"]) is False
+
+
+def test_activate_trip_restores_archived_trip(tmp_path) -> None:
+    database = Database(str(tmp_path / "activate.db"))
+    database.init_db()
+
+    first_trip_id = database.create_trip(chat_id=88, created_by=1, payload=_sample_payload("Казань"))
+    second_trip_id = database.create_trip(chat_id=88, created_by=1, payload=_sample_payload("Сочи"))
+
+    assert database.activate_trip(88, first_trip_id) is True
+
+    active_trip = database.get_active_trip(88)
+    second_trip = database.get_trip_by_id(second_trip_id)
+    assert active_trip is not None
+    assert active_trip["id"] == first_trip_id
+    assert second_trip is not None
+    assert second_trip["status"] == "archived"

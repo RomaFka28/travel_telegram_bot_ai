@@ -1,0 +1,254 @@
+import asyncio
+from types import SimpleNamespace
+
+from bot.formatters import TripFormatter
+from bot.handlers import BotHandlers
+from bot.trip_service import TripService
+from database import Database
+from travel_planner import TravelPlanner
+
+
+class DummyMessage:
+    def __init__(self, text: str = "") -> None:
+        self.text = text
+        self.replies: list[dict[str, object]] = []
+
+    async def reply_text(self, text: str, parse_mode=None, reply_markup=None) -> None:
+        self.replies.append(
+            {
+                "text": text,
+                "parse_mode": parse_mode,
+                "reply_markup": reply_markup,
+            }
+        )
+
+
+class DummyCallbackQuery:
+    def __init__(self, data: str, user, message: DummyMessage) -> None:
+        self.data = data
+        self.from_user = user
+        self.message = message
+        self.answers: list[dict[str, object]] = []
+        self.edits: list[dict[str, object]] = []
+
+    async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
+        self.answers.append({"text": text, "show_alert": show_alert})
+
+    async def edit_message_text(self, text: str, parse_mode=None, reply_markup=None) -> None:
+        self.edits.append(
+            {
+                "text": text,
+                "parse_mode": parse_mode,
+                "reply_markup": reply_markup,
+            }
+        )
+
+
+class DummyBot:
+    username = "demo_trip_bot"
+
+
+class DummyContext:
+    def __init__(self, args: list[str] | None = None) -> None:
+        self.args = args or []
+        self.user_data: dict[str, object] = {}
+        self.chat_data: dict[str, object] = {}
+        self.bot = DummyBot()
+
+
+def make_update(
+    *,
+    text: str = "",
+    chat_id: int = 100,
+    user_id: int = 1,
+    username: str = "user1",
+    first_name: str = "Test",
+    last_name: str = "User",
+):
+    message = DummyMessage(text)
+    user = SimpleNamespace(
+        id=user_id,
+        username=username,
+        first_name=first_name,
+        last_name=last_name,
+    )
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_chat=SimpleNamespace(id=chat_id),
+        effective_user=user,
+        callback_query=None,
+    )
+    return update, message
+
+
+def make_callback_update(*, data: str, chat_id: int = 100, user_id: int = 1, username: str = "user1"):
+    message = DummyMessage()
+    user = SimpleNamespace(
+        id=user_id,
+        username=username,
+        first_name="Callback",
+        last_name="User",
+    )
+    query = DummyCallbackQuery(data=data, user=user, message=message)
+    update = SimpleNamespace(
+        effective_message=message,
+        effective_chat=SimpleNamespace(id=chat_id),
+        effective_user=user,
+        callback_query=query,
+    )
+    return update, message, query
+
+
+def build_handlers(tmp_path) -> tuple[Database, BotHandlers]:
+    database = Database(str(tmp_path / "handlers.db"))
+    database.init_db()
+    planner = TravelPlanner()
+    formatter = TripFormatter(database)
+    service = TripService(database, planner)
+    return database, BotHandlers(database, planner, formatter, service)
+
+
+def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+
+    first_update, first_message = make_update(chat_id=501)
+    first_context = DummyContext(
+        args=["Хочу", "в", "Казань", "на", "3", "дня", "с", "друзьями", "бюджет", "средний"]
+    )
+    asyncio.run(handlers.plan_command(first_update, first_context))
+
+    second_update, second_message = make_update(chat_id=501)
+    second_context = DummyContext(
+        args=["Хочу", "в", "Сочи", "на", "4", "дня", "с", "друзьями", "бюджет", "комфорт"]
+    )
+    asyncio.run(handlers.plan_command(second_update, second_context))
+
+    active_trip = database.get_active_trip(501)
+    all_trips = database.list_trips(501)
+
+    assert active_trip is not None
+    assert active_trip["destination"] == "Сочи"
+    assert len(all_trips) == 2
+    assert any(trip["status"] == "archived" for trip in all_trips)
+    assert "История сохранена" in second_message.replies[0]["text"]
+    assert "Сочи" in second_message.replies[1]["text"]
+    assert "Казань" in first_message.replies[1]["text"]
+
+
+def test_newtrip_flow_creates_trip(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+
+    for handler, text in [
+        (handlers.new_trip_start, ""),
+        (handlers.new_trip_title, "Летний выезд"),
+        (handlers.new_trip_destination, "Владивосток"),
+        (handlers.new_trip_origin, "Новосибирск"),
+        (handlers.new_trip_days, "5"),
+        (handlers.new_trip_dates, "12–16 июня"),
+        (handlers.new_trip_group_size, "4"),
+        (handlers.new_trip_budget, "средний"),
+        (handlers.new_trip_interests, "море, еда"),
+        (handlers.new_trip_notes, "купить билеты до пятницы"),
+    ]:
+        update, _ = make_update(text=text, chat_id=777)
+        asyncio.run(handler(update, context))
+
+    trip = database.get_active_trip(777)
+    assert trip is not None
+    assert trip["destination"] == "Владивосток"
+    assert trip["group_size"] == 4
+    assert trip["notes"] == "купить билеты до пятницы"
+
+
+def test_status_command_and_participants_summary_cover_all_statuses(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    setup_update, _ = make_update(chat_id=333)
+    setup_context = DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня", "нас", "4"])
+    asyncio.run(handlers.plan_command(setup_update, setup_context))
+
+    for user_id, username, args in [
+        (1, "goer", ["еду"]),
+        (2, "maybe", ["думаю"]),
+        (3, "nope", ["не", "еду"]),
+    ]:
+        update, _ = make_update(chat_id=333, user_id=user_id, username=username)
+        context = DummyContext(args=args)
+        asyncio.run(handlers.status_command(update, context))
+
+    participants_update, participants_message = make_update(chat_id=333)
+    asyncio.run(handlers.participants_command(participants_update, DummyContext()))
+
+    response_text = participants_message.replies[-1]["text"]
+    assert "Едут (1)" in response_text
+    assert "Думают (1)" in response_text
+    assert "Не едут (1)" in response_text
+
+
+def test_settings_toggle_can_disable_group_autodraft(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+
+    settings_update, settings_message = make_update(chat_id=909)
+    asyncio.run(handlers.settings_command(settings_update, DummyContext()))
+    assert "Авто-черновики" in settings_message.replies[0]["text"]
+
+    callback_update, _, query = make_callback_update(data="settings:toggle_autodraft", chat_id=909)
+    asyncio.run(handlers.settings_callback(callback_update, DummyContext()))
+    assert bool(database.get_or_create_settings(909)["autodraft_enabled"]) is False
+    assert "Авто-черновики" in query.edits[-1]["text"]
+
+    group_update, group_message = make_update(
+        text="Ребята, поедем в Казань в июле на четыре дня?",
+        chat_id=909,
+    )
+    group_context = DummyContext()
+    asyncio.run(handlers.handle_group_message(group_update, group_context))
+
+    assert database.get_active_trip(909) is None
+    assert group_message.replies == []
+
+
+def test_share_and_archive_keep_trip_history(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(chat_id=404)
+    create_context = DummyContext(args=["Хочу", "в", "Питер", "на", "3", "дня"])
+    asyncio.run(handlers.plan_command(create_update, create_context))
+
+    share_update, share_message = make_update(chat_id=404)
+    asyncio.run(handlers.share_command(share_update, DummyContext()))
+    assert "https://t.me/demo_trip_bot?start=trip_" in share_message.replies[-1]["text"]
+
+    archive_update, archive_message = make_update(chat_id=404)
+    asyncio.run(handlers.archive_trip_command(archive_update, DummyContext()))
+
+    all_trips = database.list_trips(404)
+    assert database.get_active_trip(404) is None
+    assert len(all_trips) == 1
+    assert all_trips[0]["status"] == "archived"
+    assert "История сохранена" in archive_message.replies[-1]["text"]
+
+
+def test_trips_and_select_trip_commands_restore_archived_trip(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+
+    first_update, _ = make_update(chat_id=606)
+    asyncio.run(handlers.plan_command(first_update, DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])))
+
+    first_trip = database.get_active_trip(606)
+    assert first_trip is not None
+
+    second_update, _ = make_update(chat_id=606)
+    asyncio.run(handlers.plan_command(second_update, DummyContext(args=["Хочу", "в", "Сочи", "на", "4", "дня"])))
+
+    trips_update, trips_message = make_update(chat_id=606)
+    asyncio.run(handlers.trips_command(trips_update, DummyContext()))
+    assert "Поездки этого чата" in trips_message.replies[-1]["text"]
+    assert str(first_trip["id"]) in trips_message.replies[-1]["text"]
+
+    select_update, select_message = make_update(chat_id=606)
+    asyncio.run(handlers.select_trip_command(select_update, DummyContext(args=[str(first_trip["id"])])))
+
+    active_trip = database.get_active_trip(606)
+    assert active_trip is not None
+    assert active_trip["id"] == first_trip["id"]
+    assert "снова активна" in select_message.replies[0]["text"]

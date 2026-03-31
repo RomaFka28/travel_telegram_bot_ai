@@ -35,6 +35,12 @@ TRIP_COLUMNS: dict[str, str] = {
     "updated_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
 }
 
+CHAT_SETTINGS_COLUMNS: dict[str, str] = {
+    "reminders_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
+    "autodraft_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
+    "selected_trip_id": "BIGINT",
+}
+
 EDITABLE_TRIP_FIELDS = {
     "title",
     "destination",
@@ -123,6 +129,7 @@ class Database:
                 CREATE TABLE IF NOT EXISTS chat_settings (
                     chat_id INTEGER PRIMARY KEY,
                     reminders_enabled INTEGER NOT NULL DEFAULT 1,
+                    autodraft_enabled INTEGER NOT NULL DEFAULT 1,
                     selected_trip_id INTEGER
                 );
 
@@ -161,6 +168,8 @@ class Database:
             chat_settings_columns = self._sqlite_table_columns(conn, "chat_settings")
             if "selected_trip_id" not in chat_settings_columns:
                 conn.execute("ALTER TABLE chat_settings ADD COLUMN selected_trip_id INTEGER")
+            if "autodraft_enabled" not in chat_settings_columns:
+                conn.execute("ALTER TABLE chat_settings ADD COLUMN autodraft_enabled INTEGER NOT NULL DEFAULT 1")
 
     def _init_postgres(self) -> None:
         with self._connect() as conn:
@@ -201,6 +210,7 @@ class Database:
                     CREATE TABLE IF NOT EXISTS chat_settings (
                         chat_id BIGINT PRIMARY KEY,
                         reminders_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                        autodraft_enabled BOOLEAN NOT NULL DEFAULT TRUE,
                         selected_trip_id BIGINT
                     )
                     """
@@ -238,9 +248,10 @@ class Database:
                     )
                     """
                 )
-                cur.execute(
-                    "ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS selected_trip_id BIGINT"
-                )
+                for column_name, definition in CHAT_SETTINGS_COLUMNS.items():
+                    cur.execute(
+                        f"ALTER TABLE chat_settings ADD COLUMN IF NOT EXISTS {column_name} {definition}"
+                    )
                 for column_name, definition in TRIP_COLUMNS.items():
                     cur.execute(
                         f"ALTER TABLE trips ADD COLUMN IF NOT EXISTS {column_name} {definition}"
@@ -298,13 +309,14 @@ class Database:
                         (chat_id,),
                     )
                     cur.execute(
-                        "SELECT chat_id, reminders_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
+                        "SELECT chat_id, reminders_enabled, autodraft_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
                         (chat_id,),
                     )
                     row = cur.fetchone()
                     return self._row_to_dict(row) or {
                         "chat_id": chat_id,
                         "reminders_enabled": True,
+                        "autodraft_enabled": True,
                         "selected_trip_id": None,
                     }
 
@@ -320,45 +332,52 @@ class Database:
             return self._row_to_dict(row) or {
                 "chat_id": chat_id,
                 "reminders_enabled": 1,
+                "autodraft_enabled": 1,
                 "selected_trip_id": None,
             }
 
     def toggle_reminders(self, chat_id: int) -> dict[str, Any]:
+        return self._toggle_chat_setting(chat_id, "reminders_enabled")
+
+    def toggle_autodraft(self, chat_id: int) -> dict[str, Any]:
+        return self._toggle_chat_setting(chat_id, "autodraft_enabled")
+
+    def _toggle_chat_setting(self, chat_id: int, field_name: str) -> dict[str, Any]:
         current = self.get_or_create_settings(chat_id)
-        new_value = not bool(current["reminders_enabled"])
+        new_value = not bool(current[field_name])
 
         if self.is_postgres:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "UPDATE chat_settings SET reminders_enabled = %s WHERE chat_id = %s",
+                        f"UPDATE chat_settings SET {field_name} = %s WHERE chat_id = %s",
                         (new_value, chat_id),
                     )
                     cur.execute(
-                        "SELECT chat_id, reminders_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
+                        "SELECT chat_id, reminders_enabled, autodraft_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
                         (chat_id,),
                     )
                     row = cur.fetchone()
-                    return self._row_to_dict(row) or {
-                        "chat_id": chat_id,
-                        "reminders_enabled": new_value,
-                        "selected_trip_id": None,
-                    }
+                    if row:
+                        return self._row_to_dict(row) or {}
+                    fallback = current.copy()
+                    fallback[field_name] = new_value
+                    return fallback
 
         with self._connect() as conn:
             conn.execute(
-                "UPDATE chat_settings SET reminders_enabled = ? WHERE chat_id = ?",
+                f"UPDATE chat_settings SET {field_name} = ? WHERE chat_id = ?",
                 (1 if new_value else 0, chat_id),
             )
             row = conn.execute(
                 "SELECT * FROM chat_settings WHERE chat_id = ?",
                 (chat_id,),
             ).fetchone()
-            return self._row_to_dict(row) or {
-                "chat_id": chat_id,
-                "reminders_enabled": 1 if new_value else 0,
-                "selected_trip_id": None,
-            }
+            if row:
+                return self._row_to_dict(row) or {}
+            fallback = current.copy()
+            fallback[field_name] = 1 if new_value else 0
+            return fallback
 
     def set_selected_trip(self, chat_id: int, trip_id: int | None) -> None:
         self.get_or_create_settings(chat_id)
@@ -465,12 +484,7 @@ class Database:
                         (chat_id,),
                     )
                     cur.execute(sql, params)
-                    trip_id = int(cur.fetchone()["id"])
-                    cur.execute(
-                        "DELETE FROM trips WHERE chat_id = %s AND status = 'archived'",
-                        (chat_id,),
-                    )
-                    return trip_id
+                    return int(cur.fetchone()["id"])
 
         placeholders = ", ".join(["?"] * len(fields))
         sql = f"INSERT INTO trips({', '.join(fields)}) VALUES ({placeholders})"
@@ -480,10 +494,6 @@ class Database:
                 (chat_id,),
             )
             cursor = conn.execute(sql, params)
-            conn.execute(
-                "DELETE FROM trips WHERE chat_id = ? AND status = 'archived'",
-                (chat_id,),
-            )
             return int(cursor.lastrowid)
 
     def archive_active_trip(self, chat_id: int) -> bool:
@@ -494,26 +504,59 @@ class Database:
                         "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = %s AND status = 'active'",
                         (chat_id,),
                     )
-                    archived = cur.rowcount > 0
-                    if archived:
-                        cur.execute(
-                            "DELETE FROM trips WHERE chat_id = %s AND status = 'archived'",
-                            (chat_id,),
-                        )
-                    return archived
+                    return cur.rowcount > 0
 
         with self._connect() as conn:
             cursor = conn.execute(
                 "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND status = 'active'",
                 (chat_id,),
             )
-            archived = cursor.rowcount > 0
-            if archived:
-                conn.execute(
-                    "DELETE FROM trips WHERE chat_id = ? AND status = 'archived'",
-                    (chat_id,),
-                )
-            return archived
+            return cursor.rowcount > 0
+
+    def list_trips(self, chat_id: int, status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT * FROM trips WHERE chat_id = ?"
+        params: tuple[Any, ...] = (chat_id,)
+        if status:
+            sql += " AND status = ?"
+            params += (status,)
+        sql += " ORDER BY updated_at DESC, id DESC"
+        rows = self._q(sql, params)
+        return rows or []
+
+    def activate_trip(self, chat_id: int, trip_id: int) -> bool:
+        trip = self.get_trip_by_id(trip_id)
+        if not trip or int(trip["chat_id"]) != chat_id:
+            return False
+
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = %s AND status = 'active' AND id <> %s",
+                        (chat_id, trip_id),
+                    )
+                    cur.execute(
+                        "UPDATE trips SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = %s AND chat_id = %s",
+                        (trip_id, chat_id),
+                    )
+                    activated = cur.rowcount > 0
+            if activated:
+                self.set_selected_trip(chat_id, trip_id)
+            return activated
+
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND status = 'active' AND id <> ?",
+                (chat_id, trip_id),
+            )
+            cursor = conn.execute(
+                "UPDATE trips SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND chat_id = ?",
+                (trip_id, chat_id),
+            )
+            activated = cursor.rowcount > 0
+        if activated:
+            self.set_selected_trip(chat_id, trip_id)
+        return activated
 
     def update_trip_fields(self, trip_id: int, updates: dict[str, Any]) -> None:
         safe_updates = {key: value for key, value in updates.items() if key in EDITABLE_TRIP_FIELDS}

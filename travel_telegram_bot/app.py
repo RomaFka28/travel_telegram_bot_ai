@@ -35,12 +35,14 @@ from travel_planner import TravelPlanner
 
 async def post_init(application) -> None:
     commands = [
-        BotCommand("start", "Приветствие и возможности"),
-        BotCommand("help", "Список команд"),
+        BotCommand("start", "Быстрый старт и сценарии"),
+        BotCommand("help", "Возможности, ограничения и инструкции"),
         BotCommand("plan", "Создать поездку из свободного текста"),
         BotCommand("planai", "Создать поездку через LLM (OpenRouter)"),
         BotCommand("share", "Поделиться планом"),
         BotCommand("newtrip", "Создать поездку пошагово"),
+        BotCommand("trips", "Показать историю поездок"),
+        BotCommand("select_trip", "Сделать поездку активной по ID"),
         BotCommand("summary", "Показать сводку"),
         BotCommand("brief", "Показать travel-brief"),
         BotCommand("itinerary", "Маршрут по дням"),
@@ -48,15 +50,15 @@ async def post_init(application) -> None:
         BotCommand("route", "Логистика и как добраться"),
         BotCommand("stay", "Где жить"),
         BotCommand("alternatives", "Альтернативные направления"),
-        BotCommand("status", "Отметить участие"),
-        BotCommand("participants", "Список участников"),
+        BotCommand("status", "Отметить статус участия"),
+        BotCommand("participants", "Статусы участников"),
         BotCommand("adddate", "Добавить вариант дат"),
         BotCommand("setdestination", "Изменить направление"),
         BotCommand("setdates", "Изменить даты"),
         BotCommand("interests", "Изменить интересы"),
         BotCommand("notes", "Обновить заметки"),
-        BotCommand("settings", "Настройки чата"),
-        BotCommand("archive_trip", "Закрыть поездку"),
+        BotCommand("settings", "Управление режимом чата"),
+        BotCommand("archive_trip", "Архивировать активную поездку"),
     ]
     await application.bot.set_my_commands(commands)
 
@@ -116,6 +118,8 @@ def build_application():
     app.add_handler(CommandHandler("share", handlers.share_command))
     app.add_handler(CommandHandler("plan", handlers.plan_command))
     app.add_handler(CommandHandler("planai", handlers.plan_ai_command))
+    app.add_handler(CommandHandler("trips", handlers.trips_command))
+    app.add_handler(CommandHandler("select_trip", handlers.select_trip_command))
     app.add_handler(CommandHandler("summary", handlers.summary_command))
     app.add_handler(CommandHandler("brief", handlers.brief_command))
     app.add_handler(CommandHandler("itinerary", handlers.itinerary_command))

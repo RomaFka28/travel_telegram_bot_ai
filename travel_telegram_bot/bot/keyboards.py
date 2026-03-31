@@ -11,19 +11,29 @@ STATUS_LABELS = {
 
 
 def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
-    buttons = [[
-        InlineKeyboardButton(text="✅ Еду", callback_data=f"tripaction:{trip_id}:going"),
-        InlineKeyboardButton(text="🔗 Поделиться", callback_data=f"tripaction:{trip_id}:share"),
-        InlineKeyboardButton(text="✏️ Изменить", callback_data=f"tripaction:{trip_id}:edit"),
-    ]]
+    buttons = [
+        [
+            InlineKeyboardButton(text="✅ Еду", callback_data=f"tripaction:{trip_id}:going"),
+            InlineKeyboardButton(text="🤔 Думаю", callback_data=f"tripaction:{trip_id}:interested"),
+            InlineKeyboardButton(text="❌ Не еду", callback_data=f"tripaction:{trip_id}:not_going"),
+        ],
+        [
+            InlineKeyboardButton(text="🔗 Поделиться", callback_data=f"tripaction:{trip_id}:share"),
+            InlineKeyboardButton(text="✏️ Изменить", callback_data=f"tripaction:{trip_id}:edit"),
+        ],
+    ]
     return InlineKeyboardMarkup(buttons)
 
 
 
-def settings_keyboard(reminders_enabled: bool) -> InlineKeyboardMarkup:
-    label = "🔔 Напоминания: вкл" if reminders_enabled else "🔕 Напоминания: выкл"
+def settings_keyboard(reminders_enabled: bool, autodraft_enabled: bool) -> InlineKeyboardMarkup:
+    reminders_label = "🔔 Напоминания: вкл" if reminders_enabled else "🔕 Напоминания: выкл"
+    autodraft_label = "🧠 Авто-черновики: вкл" if autodraft_enabled else "🛑 Авто-черновики: выкл"
     return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(text=label, callback_data="settings:toggle_reminders")]]
+        [
+            [InlineKeyboardButton(text=reminders_label, callback_data="settings:toggle_reminders")],
+            [InlineKeyboardButton(text=autodraft_label, callback_data="settings:toggle_autodraft")],
+        ]
     )
 
 
