@@ -53,3 +53,64 @@ def test_planner_and_database_smoke() -> None:
     trip = database.get_trip_by_id(trip_id)
     assert trip is not None
     assert trip["destination"] == "Владивосток"
+
+
+def test_weather_future_returns_none():
+    from datetime import date, timedelta
+    from weather_service import fetch_weather_summary
+
+    future_date = (date.today() + timedelta(days=30)).strftime("%d %B")
+    result = fetch_weather_summary("Владивосток", f"1–5 {future_date}")
+    assert result is None or isinstance(result, str)
+
+
+def test_unknown_destination_disclaimer():
+    from travel_planner import TravelPlanner
+
+    planner = TravelPlanner()
+    request = planner.build_request_from_fields(
+        title="Test",
+        destination="Урюпинск",
+        origin="Москва",
+        dates_text="июль",
+        days_count=3,
+        group_size=2,
+        budget_text="средний",
+        interests_text="еда",
+        notes="",
+        source_prompt="",
+    )
+    plan = planner.generate_plan(request)
+    assert "⚠️" in plan.context_text
+
+
+def test_group_analyzer_detects_intent():
+    from bot.group_chat_analyzer import GroupChatAnalyzer
+
+    analyzer = GroupChatAnalyzer()
+    signal = analyzer.analyze("Ребята, поедем во Владивосток в июне, нас четверо!")
+    assert signal.has_travel_intent is True
+    assert signal.destination is not None
+    assert "июн" in (signal.dates_text or "")
+
+
+def test_group_analyzer_ignores_short():
+    from bot.group_chat_analyzer import GroupChatAnalyzer
+
+    signal = GroupChatAnalyzer().analyze("Привет!")
+    assert signal.has_travel_intent is False
+
+
+def test_group_analyzer_no_intent():
+    from bot.group_chat_analyzer import GroupChatAnalyzer
+
+    signal = GroupChatAnalyzer().analyze("Сегодня хорошая погода, надо купить молоко и хлеб.")
+    assert signal.has_travel_intent is False
+
+
+def test_participant_names_exclude_cities():
+    from bot.group_chat_analyzer import GroupChatAnalyzer
+
+    signal = GroupChatAnalyzer().analyze("Миша предлагает поехать во Владивосток.")
+    assert "Владивосток" not in signal.participants_mentioned
+    assert "Миша" in signal.participants_mentioned

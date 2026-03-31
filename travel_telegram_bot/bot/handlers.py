@@ -11,6 +11,7 @@ from telegram import ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes, ConversationHandler
 
+from bot.formatters import TripFormatter
 from bot.keyboards import (
     STATUS_LABELS,
     date_vote_keyboard,
@@ -21,6 +22,7 @@ from bot.keyboards import (
     trip_group_size_keyboard,
     trip_skip_keyboard,
 )
+from bot.trip_service import TripService
 from database import Database
 from llm_travel_planner import LLMTravelPlanner
 from travel_planner import TravelPlanner
@@ -40,9 +42,17 @@ NEW_TRIP_NOTES: Final[int] = 9
 
 
 class BotHandlers:
-    def __init__(self, database: Database, planner: TravelPlanner) -> None:
+    def __init__(
+        self,
+        database: Database,
+        planner: TravelPlanner,
+        formatter: TripFormatter,
+        service: TripService,
+    ) -> None:
         self.db = database
         self.planner = planner
+        self.formatter = formatter
+        self.service = service
 
     @staticmethod
     def _display_name(update: Update) -> str:
@@ -348,7 +358,7 @@ class BotHandlers:
                     "План открыт. Ниже текущая карточка поездки, можно смотреть детали и отмечать участие."
                 )
                 await message.reply_text(
-                    self._build_summary_html(int(trip["id"])),
+                    self.formatter._build_summary_html(int(trip["id"])),
                     parse_mode=ParseMode.HTML,
                     reply_markup=participant_status_keyboard(int(trip["id"])),
                 )
@@ -413,16 +423,16 @@ class BotHandlers:
             return
 
         plan = self.planner.generate_plan(request)
-        payload = self._build_trip_payload(request, plan, notes_override="")
+        payload = self.service._build_trip_payload(request, plan, notes_override="")
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
         self.db.set_selected_trip(chat.id, trip_id)
-        self._refresh_weather_for_trip(trip_id)
+        self.service._refresh_weather_for_trip(trip_id)
 
         await update.effective_message.reply_text(
             "Черновик поездки готов. Я разобрал запрос и собрал travel-brief, маршрут, логистику и бюджетный ориентир."
         )
         await update.effective_message.reply_text(
-            self._build_summary_html(trip_id),
+            self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
             reply_markup=participant_status_keyboard(trip_id),
         )
@@ -449,8 +459,13 @@ class BotHandlers:
             return
 
         if isinstance(self.planner, LLMTravelPlanner):
+            import asyncio
+
             await update.effective_message.reply_text("Думаю над поездкой (LLM)… это может занять до минуты.")
-            plan, used_llm, err = self.planner.generate_plan_with_fallback(request)
+            plan, used_llm, err = await asyncio.to_thread(
+                self.planner.generate_plan_with_fallback,
+                request,
+            )
             if not used_llm and err:
                 await update.effective_message.reply_text(
                     "Не получилось получить ответ от LLM, собрал план на встроенных эвристиках.\n"
@@ -462,13 +477,13 @@ class BotHandlers:
             )
             return
 
-        payload = self._build_trip_payload(request, plan, notes_override="")
+        payload = self.service._build_trip_payload(request, plan, notes_override="")
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
         self.db.set_selected_trip(chat.id, trip_id)
-        self._refresh_weather_for_trip(trip_id)
+        self.service._refresh_weather_for_trip(trip_id)
         await update.effective_message.reply_text("Готово. Поездка сохранена.")
         await update.effective_message.reply_text(
-            self._build_summary_html(trip_id),
+            self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
             reply_markup=participant_status_keyboard(trip_id),
         )
@@ -590,15 +605,15 @@ class BotHandlers:
             return ConversationHandler.END
 
         plan = self.planner.generate_plan(request)
-        payload = self._build_trip_payload(request, plan, notes_override=notes)
+        payload = self.service._build_trip_payload(request, plan, notes_override=notes)
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
         self.db.set_selected_trip(chat.id, trip_id)
-        self._refresh_weather_for_trip(trip_id)
+        self.service._refresh_weather_for_trip(trip_id)
         context.user_data.pop("trip_draft", None)
 
         await update.effective_message.reply_text("Поездка создана. Я сразу собрал маршрут, бюджет и подсказки по проживанию.")
         await update.effective_message.reply_text(
-            self._build_summary_html(trip_id),
+            self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
             reply_markup=participant_status_keyboard(trip_id),
         )
@@ -621,9 +636,9 @@ class BotHandlers:
         if not trip:
             return
         if not (trip["weather_text"] or "").strip():
-            self._refresh_weather_for_trip(int(trip["id"]))
+            self.service._refresh_weather_for_trip(int(trip["id"]))
         await update.effective_message.reply_text(
-            self._build_summary_html(int(trip["id"])),
+            self.formatter._build_summary_html(int(trip["id"])),
             parse_mode=ParseMode.HTML,
             reply_markup=participant_status_keyboard(int(trip["id"])),
         )
@@ -633,7 +648,7 @@ class BotHandlers:
         if not trip:
             return
         await update.effective_message.reply_text(
-            self._build_brief_html(int(trip["id"])),
+            self.formatter._build_brief_html(int(trip["id"])),
             parse_mode=ParseMode.HTML,
         )
 
@@ -680,7 +695,7 @@ class BotHandlers:
         if context.args:
             value = " ".join(context.args).strip()
             self.db.update_trip_fields(int(trip["id"]), {"budget_text": value})
-            self._rebuild_trip(int(trip["id"]))
+            self.service._rebuild_trip(int(trip["id"]))
             trip = self.db.get_trip_by_id(int(trip["id"]))
             await update.effective_message.reply_text(f"Бюджет обновлён: {value}")
         await update.effective_message.reply_text(
@@ -736,16 +751,16 @@ class BotHandlers:
         if not edit_text:
             await message.reply_text("\u041d\u0443\u0436\u0435\u043d \u0442\u0435\u043a\u0441\u0442 \u0437\u0430\u043f\u0440\u043e\u0441\u0430 \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
             return
-        request = self._merge_edit_request(trip, edit_text)
+        request = self.service._merge_edit_request(trip, edit_text)
         plan = self.planner.generate_plan(request)
         self.db.update_trip_fields(
             int(trip_id),
-            self._build_trip_payload(request, plan, notes_override=trip["notes"] or ""),
+            self.service._build_trip_payload(request, plan, notes_override=trip["notes"] or ""),
         )
-        self._refresh_weather_for_trip(int(trip_id))
+        self.service._refresh_weather_for_trip(int(trip_id))
         await message.reply_text("\u041f\u043b\u0430\u043d \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d.")
         await message.reply_text(
-            self._build_summary_html(int(trip_id)),
+            self.formatter._build_summary_html(int(trip_id)),
             parse_mode=ParseMode.HTML,
             reply_markup=participant_status_keyboard(int(trip_id)),
         )
@@ -757,6 +772,63 @@ class BotHandlers:
             chat_id=chat.id if chat else None,
             elapsed_ms=int((time.perf_counter() - started_at) * 1000),
         )
+
+    async def handle_group_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        message = update.effective_message
+        chat = update.effective_chat
+        if not message or not chat:
+            return
+        text = (message.text or "").strip()
+        if len(text) < 15:
+            return
+
+        from bot.group_chat_analyzer import GroupChatAnalyzer
+
+        signal = GroupChatAnalyzer().analyze(text)
+        if not signal.has_travel_intent:
+            return
+
+        now = time.time()
+        last = context.chat_data.get("last_auto_reply", 0)
+
+        active_trip = self.db.get_active_trip(chat.id)
+        user = update.effective_user
+
+        if active_trip:
+            current_dest = (active_trip.get("destination") or "").strip().lower()
+            signal_dest = (signal.destination or "").strip().lower()
+            if current_dest and signal_dest and current_dest == signal_dest:
+                updates: dict = {}
+                if signal.dates_text:
+                    updates["dates_text"] = signal.dates_text
+                if signal.budget_hint:
+                    updates["budget_text"] = signal.budget_hint
+                if signal.interests:
+                    updates["interests_text"] = ", ".join(signal.interests)
+                if updates:
+                    self.db.update_trip_fields(int(active_trip["id"]), updates)
+                    self.service._rebuild_trip(int(active_trip["id"]))
+                    if "dates_text" in updates:
+                        self.service._refresh_weather_for_trip(int(active_trip["id"]))
+            return
+
+        if not signal.destination:
+            return
+
+        if now - last < 300:
+            return
+
+        trip_id = self.service.auto_draft_from_signal(
+            chat_id=chat.id,
+            created_by=user.id if user else None,
+            signal=signal,
+        )
+        if trip_id:
+            context.chat_data["last_auto_reply"] = now
+            await message.reply_text(
+                "🗺 Заметил обсуждение поездки. Собрал черновик — /summary чтобы посмотреть."
+            )
+
     async def trip_action_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         if not query or not query.from_user:
@@ -798,7 +870,7 @@ class BotHandlers:
                 )
                 if query.message:
                     await query.edit_message_text(
-                        text=self._build_summary_html(trip_id),
+                        text=self.formatter._build_summary_html(trip_id),
                         parse_mode=ParseMode.HTML,
                         reply_markup=participant_status_keyboard(trip_id),
                     )
@@ -921,8 +993,8 @@ class BotHandlers:
             return
         value = " ".join(context.args).strip()
         self.db.update_trip_fields(int(trip["id"]), {"destination": value})
-        self._rebuild_trip(int(trip["id"]))
-        self._refresh_weather_for_trip(int(trip["id"]))
+        self.service._rebuild_trip(int(trip["id"]))
+        self.service._refresh_weather_for_trip(int(trip["id"]))
         await update.effective_message.reply_text(f"Направление обновлено: {value}")
 
     async def set_dates_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -934,7 +1006,7 @@ class BotHandlers:
             return
         value = " ".join(context.args).strip()
         self.db.update_trip_fields(int(trip["id"]), {"dates_text": value})
-        self._refresh_weather_for_trip(int(trip["id"]))
+        self.service._refresh_weather_for_trip(int(trip["id"]))
         await update.effective_message.reply_text(f"Даты обновлены: {value}")
 
     async def interests_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -946,7 +1018,7 @@ class BotHandlers:
             return
         value = " ".join(context.args).strip()
         self.db.update_trip_fields(int(trip["id"]), {"interests_text": value})
-        self._rebuild_trip(int(trip["id"]))
+        self.service._rebuild_trip(int(trip["id"]))
         await update.effective_message.reply_text(f"Интересы обновлены: {value}")
 
     async def notes_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

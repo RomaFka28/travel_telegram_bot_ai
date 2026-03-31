@@ -12,6 +12,7 @@ from telegram.ext import (
     filters,
 )
 
+from bot.formatters import TripFormatter
 from bot.handlers import (
     NEW_TRIP_BUDGET,
     NEW_TRIP_DATES,
@@ -24,6 +25,7 @@ from bot.handlers import (
     NEW_TRIP_TITLE,
     BotHandlers,
 )
+from bot.trip_service import TripService
 from config import load_settings
 from database import Database
 from health_server import start_if_render
@@ -79,7 +81,9 @@ def build_application():
         )
     else:
         planner = TravelPlanner()
-    handlers = BotHandlers(database, planner)
+    formatter = TripFormatter(database)
+    service = TripService(database, planner)
+    handlers = BotHandlers(database, planner, formatter, service)
 
     app = (
         ApplicationBuilder()
@@ -129,7 +133,18 @@ def build_application():
     app.add_handler(CommandHandler("settings", handlers.settings_command))
     app.add_handler(CommandHandler("archive_trip", handlers.archive_trip_command))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.handle_trip_edit_input))
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            handlers.handle_trip_edit_input,
+        )
+    )
+    app.add_handler(
+        MessageHandler(
+            filters.ChatType.GROUPS & filters.TEXT & ~filters.COMMAND,
+            handlers.handle_group_message,
+        )
+    )
     app.add_handler(CallbackQueryHandler(handlers.trip_action_callback, pattern=r"^tripaction:"))
     app.add_handler(CallbackQueryHandler(handlers.date_vote_callback, pattern=r"^datevote:"))
     app.add_handler(CallbackQueryHandler(handlers.settings_callback, pattern=r"^settings:"))

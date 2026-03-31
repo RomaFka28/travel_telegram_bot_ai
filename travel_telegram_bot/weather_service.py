@@ -6,7 +6,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 
 class WeatherError(RuntimeError):
@@ -82,18 +82,18 @@ def _parse_dates_range(dates_text: str) -> tuple[date, date] | None:
     if not text or text == "не указаны":
         return None
 
-    m = re.search(
+    match = re.search(
         r"\b(\d{1,2})\s*(?:-|–|—|до)?\s*(\d{0,2})\s*([а-яё]+)",
         text,
         flags=re.IGNORECASE,
     )
-    if not m:
+    if not match:
         return None
 
-    d1 = int(m.group(1))
-    d2_raw = m.group(2).strip()
-    d2 = int(d2_raw) if d2_raw else d1
-    month_word = m.group(3)
+    start_day = int(match.group(1))
+    end_raw = match.group(2).strip()
+    end_day = int(end_raw) if end_raw else start_day
+    month_word = match.group(3)
 
     month = None
     for key, value in MONTHS_RU.items():
@@ -105,8 +105,8 @@ def _parse_dates_range(dates_text: str) -> tuple[date, date] | None:
 
     year = date.today().year
     try:
-        start = date(year, month, d1)
-        end = date(year, month, d2)
+        start = date(year, month, start_day)
+        end = date(year, month, end_day)
     except ValueError:
         return None
     if end < start:
@@ -125,11 +125,10 @@ def fetch_weather_summary(destination: str, dates_text: str) -> str | None:
 
     start, end = dates
     today = date.today()
-    # Open-Meteo forecast: typically limited horizon. Be honest.
     if start < today - timedelta(days=2):
         return "Погода: даты уже в прошлом — прогноз не строю."
     if start > today + timedelta(days=16):
-        return "Погода: прогноз обычно доступен примерно за 16 дней до даты поездки."
+        return None
 
     geo = geocode_city(destination)
     if not geo:
@@ -172,14 +171,14 @@ def fetch_weather_summary(destination: str, dates_text: str) -> str | None:
     if not days:
         return "Погода: прогноз недоступен."
 
-    def _avg(vals: list) -> float | None:
-        nums = [float(v) for v in vals if v is not None]
-        return (sum(nums) / len(nums)) if nums else None
+    def _avg(values: list[object]) -> float | None:
+        numbers = [float(value) for value in values if value is not None]
+        return (sum(numbers) / len(numbers)) if numbers else None
 
     avg_max = _avg(tmax)
     avg_min = _avg(tmin)
-    sum_prcp = sum(float(v) for v in prcp if v is not None) if prcp else 0.0
-    max_wind = max((float(v) for v in wind if v is not None), default=None)
+    sum_prcp = sum(float(value) for value in prcp if value is not None) if prcp else 0.0
+    max_wind = max((float(value) for value in wind if value is not None), default=None)
 
     place = geo.name + (f", {geo.country}" if geo.country else "")
     date_label = f"{start.strftime('%d.%m')}–{end.strftime('%d.%m')}"
@@ -195,4 +194,3 @@ def fetch_weather_summary(destination: str, dates_text: str) -> str | None:
     if end > forecast_end:
         parts.append("Примечание: прогноз есть не на все даты (ограничение горизонта).")
     return "\n".join(parts)
-

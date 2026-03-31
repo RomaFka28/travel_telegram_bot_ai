@@ -548,10 +548,10 @@ class TravelPlanner:
             source_prompt=(source_prompt or notes or f"Поездка в {destination_clean}").strip(),
         )
 
-    def generate_plan(self, request: TripRequest) -> TripPlan:
+    def generate_plan_heuristic(self, request: TripRequest) -> TripPlan:
         profile = self._find_profile(request.destination)
         budget_level = self._detect_budget_level(request.budget_text)
-        context = self._build_context_text(profile, request)
+        context = self._build_context_text(profile, request, is_fallback=profile.key == "generic")
         itinerary = self._build_itinerary(profile, request)
         logistics = self._build_logistics_text(profile, request)
         stay = self._build_stay_text(profile, request)
@@ -566,6 +566,9 @@ class TravelPlanner:
             budget_breakdown_text=budget_breakdown,
             budget_total_text=budget_total,
         )
+
+    def generate_plan(self, request: TripRequest) -> TripPlan:
+        return self.generate_plan_heuristic(request)
 
     def profile_for(self, destination: str) -> DestinationProfile:
         return self._find_profile(destination)
@@ -589,6 +592,7 @@ class TravelPlanner:
             if any(alias.lower() in destination_lower for alias in profile.aliases):
                 return profile
         generic = DEFAULT_PROFILE
+        is_fallback = True
         return DestinationProfile(
             key=generic.key,
             display_name=self._display_destination(destination),
@@ -762,13 +766,23 @@ class TravelPlanner:
                 return "комфорт"
         return "средний"
 
-    def _build_context_text(self, profile: DestinationProfile, request: TripRequest) -> str:
-        lines = [
+    def _build_context_text(
+        self,
+        profile: DestinationProfile,
+        request: TripRequest,
+        is_fallback: bool = False,
+    ) -> str:
+        lines: list[str] = []
+        if is_fallback:
+            lines.append(
+                "⚠️ Направление не в базе бота — маршрут ниже это общий шаблон, не реальные рекомендации по городу."
+            )
+        lines.extend([
             f"• Направление: {profile.display_name}, {profile.country}",
             f"• Формат поездки: {profile.vibe}",
             f"• Лучший сезон: {profile.best_season}",
             f"• Валюта / базовая расчетная единица: {profile.currency}",
-        ]
+        ])
         for fact in profile.quick_facts[:2]:
             lines.append(f"• Важно: {fact}")
         return "\n".join(lines)

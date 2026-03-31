@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from openrouter_client import OpenRouterConfig, OpenRouterError, generate_trip_plan
 from travel_planner import TripPlan, TripRequest, TravelPlanner
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -25,8 +28,11 @@ class LLMTravelPlanner(TravelPlanner):
         return generate_trip_plan(config, request)
 
     def generate_plan(self, request: TripRequest) -> TripPlan:
-        # Default behavior unchanged: heuristics.
-        return super().generate_plan(request)
+        try:
+            return self.generate_plan_llm(request)
+        except OpenRouterError:
+            logger.exception("LLM plan generation failed, falling back to heuristic planner")
+            return self.generate_plan_heuristic(request)
 
     def generate_plan_with_fallback(self, request: TripRequest) -> tuple[TripPlan, bool, str | None]:
         """
@@ -36,5 +42,4 @@ class LLMTravelPlanner(TravelPlanner):
             plan = self.generate_plan_llm(request)
             return plan, True, None
         except OpenRouterError as exc:
-            return super().generate_plan(request), False, str(exc)
-
+            return self.generate_plan_heuristic(request), False, str(exc)

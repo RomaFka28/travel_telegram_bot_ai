@@ -267,6 +267,24 @@ class Database:
             return int(value)
         return value
 
+    def _q(self, sql: str, params: tuple = ()) -> Any:
+        """Execute sql written with ? placeholders on both backends."""
+        if self.is_postgres:
+            sql = sql.replace("?", "%s")
+        with self._connect() as conn:
+            if self.is_postgres:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+                    try:
+                        return self._rows_to_dicts(cur.fetchall())
+                    except Exception:
+                        return None
+            cur = conn.execute(sql, params)
+            try:
+                return self._rows_to_dicts(cur.fetchall())
+            except Exception:
+                return None
+
     def get_or_create_settings(self, chat_id: int) -> dict[str, Any]:
         if self.is_postgres:
             with self._connect() as conn:
@@ -402,64 +420,34 @@ class Database:
             return token
 
     def get_trip_by_share_token(self, token: str) -> dict[str, Any] | None:
-        if self.is_postgres:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        SELECT t.*
-                        FROM trip_links l
-                        JOIN trips t ON t.id = l.trip_id
-                        WHERE l.token = %s
-                        LIMIT 1
-                        """,
-                        (token,),
-                    )
-                    return self._row_to_dict(cur.fetchone())
-
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT t.*
-                FROM trip_links l
-                JOIN trips t ON t.id = l.trip_id
-                WHERE l.token = ?
-                LIMIT 1
-                """,
-                (token,),
-            ).fetchone()
-            return self._row_to_dict(row)
+        rows = self._q(
+            """
+            SELECT t.*
+            FROM trip_links l
+            JOIN trips t ON t.id = l.trip_id
+            WHERE l.token = ?
+            LIMIT 1
+            """,
+            (token,),
+        )
+        return rows[0] if rows else None
 
     def get_active_trip(self, chat_id: int) -> dict[str, Any] | None:
-        query = """
+        rows = self._q(
+            """
             SELECT *
             FROM trips
-            WHERE chat_id = {placeholder} AND status = 'active'
+            WHERE chat_id = ? AND status = 'active'
             ORDER BY id DESC
             LIMIT 1
-        """
-        params = (chat_id,)
-
-        if self.is_postgres:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query.format(placeholder="%s"), params)
-                    return self._row_to_dict(cur.fetchone())
-
-        with self._connect() as conn:
-            row = conn.execute(query.format(placeholder="?"), params).fetchone()
-            return self._row_to_dict(row)
+            """,
+            (chat_id,),
+        )
+        return rows[0] if rows else None
 
     def get_trip_by_id(self, trip_id: int) -> dict[str, Any] | None:
-        if self.is_postgres:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT * FROM trips WHERE id = %s", (trip_id,))
-                    return self._row_to_dict(cur.fetchone())
-
-        with self._connect() as conn:
-            row = conn.execute("SELECT * FROM trips WHERE id = ?", (trip_id,)).fetchone()
-            return self._row_to_dict(row)
+        rows = self._q("SELECT * FROM trips WHERE id = ?", (trip_id,))
+        return rows[0] if rows else None
 
     def create_trip(self, chat_id: int, created_by: int | None, payload: dict[str, Any]) -> int:
         values = {key: value for key, value in payload.items() if key in EDITABLE_TRIP_FIELDS and key != "status"}
@@ -598,20 +586,16 @@ class Database:
 
     def list_participants(self, trip_id: int) -> list[dict[str, Any]]:
         if self.is_postgres:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT * FROM participants WHERE trip_id = %s ORDER BY LOWER(full_name) ASC",
-                        (trip_id,),
-                    )
-                    return self._rows_to_dicts(cur.fetchall())
-
-        with self._connect() as conn:
-            rows = conn.execute(
+            rows = self._q(
+                "SELECT * FROM participants WHERE trip_id = ? ORDER BY LOWER(full_name) ASC",
+                (trip_id,),
+            )
+        else:
+            rows = self._q(
                 "SELECT * FROM participants WHERE trip_id = ? ORDER BY full_name COLLATE NOCASE ASC",
                 (trip_id,),
-            ).fetchall()
-            return self._rows_to_dicts(rows)
+            )
+        return rows or []
 
     def add_date_option(self, trip_id: int, label: str, created_by: int) -> int:
         if self.is_postgres:
@@ -631,41 +615,28 @@ class Database:
             return int(cursor.lastrowid)
 
     def get_date_option(self, option_id: int) -> dict[str, Any] | None:
-        if self.is_postgres:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT * FROM date_options WHERE id = %s", (option_id,))
-                    return self._row_to_dict(cur.fetchone())
-
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM date_options WHERE id = ?",
-                (option_id,),
-            ).fetchone()
-            return self._row_to_dict(row)
+        rows = self._q(
+            "SELECT * FROM date_options WHERE id = ?",
+            (option_id,),
+        )
+        return rows[0] if rows else None
 
     def list_date_options(self, trip_id: int) -> list[dict[str, Any]]:
-        query = """
+        rows = self._q(
+            """
             SELECT
                 d.id,
                 d.label,
                 COUNT(v.id) AS votes
             FROM date_options d
             LEFT JOIN date_votes v ON v.option_id = d.id
-            WHERE d.trip_id = {placeholder}
+            WHERE d.trip_id = ?
             GROUP BY d.id, d.label
             ORDER BY votes DESC, d.id ASC
-        """
-
-        if self.is_postgres:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(query.format(placeholder="%s"), (trip_id,))
-                    return self._rows_to_dicts(cur.fetchall())
-
-        with self._connect() as conn:
-            rows = conn.execute(query.format(placeholder="?"), (trip_id,)).fetchall()
-            return self._rows_to_dicts(rows)
+            """,
+            (trip_id,),
+        )
+        return rows or []
 
     def toggle_date_vote(self, option_id: int, user_id: int) -> tuple[bool, int]:
         if self.is_postgres:
