@@ -29,7 +29,7 @@ class HousingSearchProvider(Protocol):
 
 class LinkOnlyHousingSearchProvider:
     async def search(self, *, destination: str, dates_text: str, group_size: int) -> HousingSearchResponse:
-        links = build_links_map(destination, dates_text, origin=None)
+        links = build_links_map(destination, dates_text, origin=None, context_text="жилье отель квартира суточно турбаза")
         stay_style = "апартаменты / дом" if group_size >= 4 else "отель или студия"
         results = [
             HousingResult(

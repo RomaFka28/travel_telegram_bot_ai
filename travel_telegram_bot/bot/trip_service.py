@@ -68,7 +68,12 @@ class TripService:
             "budget_breakdown_text": plan.budget_breakdown_text,
             "budget_total_text": plan.budget_total_text,
             "tickets_text": tickets_text,
-            "links_text": build_links_text(request.destination, request.dates_text, request.origin),
+            "links_text": build_links_text(
+                request.destination,
+                request.dates_text,
+                request.origin,
+                context_text=f"{request.source_prompt}\n{notes}",
+            ),
             "status": "active",
         }
 

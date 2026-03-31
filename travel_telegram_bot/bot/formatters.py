@@ -153,7 +153,7 @@ class TripFormatter:
         weather_text = (trip.get("weather_text") or "").strip()
         tickets_text = (trip.get("tickets_text") or "").strip().splitlines()
         links_text = (trip.get("links_text") or "").strip().splitlines()
-        useful_links = "\n".join(links_text[:3]) if links_text else "Ссылки пока не собраны."
+        useful_links = "\n".join(links_text[:5]) if links_text else "Ссылки пока не собраны."
         tickets_preview = "\n".join(tickets_text[:2]) if tickets_text else ""
         return (
             f"🧭 Собрал черновик поездки\n"
