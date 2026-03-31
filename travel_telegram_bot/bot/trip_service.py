@@ -42,7 +42,13 @@ class TripService:
             "source_prompt": trip["source_prompt"] or "",
         }
 
-    def _build_short_summary(self, request, detected_needs: list[str], flight_results: list[TravelSearchResult]) -> str:
+    def _build_short_summary(
+        self,
+        request,
+        detected_needs: list[str],
+        flight_results: list[TravelSearchResult],
+        housing_results: list[TravelSearchResult],
+    ) -> str:
         lines = [
             f"\u041a\u0443\u0434\u0430: {request.destination or '\u0443\u0442\u043e\u0447\u043d\u044f\u0435\u0442\u0441\u044f'}",
             f"\u041a\u043e\u0433\u0434\u0430: {request.dates_text or '\u0443\u0442\u043e\u0447\u043d\u044f\u0435\u0442\u0441\u044f'}",
@@ -62,6 +68,8 @@ class TripService:
             lines.append("\u041e\u0431\u0441\u0443\u0436\u0434\u0430\u043b\u0438: " + ", ".join(labels.get(need, need) for need in detected_needs))
         if flight_results:
             lines.append(f"\u041b\u0443\u0447\u0448\u0438\u0439 \u0431\u0438\u043b\u0435\u0442: {flight_results[0].price_text}")
+        if housing_results:
+            lines.append(f"\u041b\u0443\u0447\u0448\u0435\u0435 \u0436\u0438\u043b\u044c\u0451: {housing_results[0].price_text}")
         return "\n".join(lines)
 
     def _collect_structured_results(self, request) -> tuple[list[str], dict[str, list[TravelSearchResult]], str, str]:
@@ -73,6 +81,7 @@ class TripService:
             request.origin,
             group_size=request.group_size,
             context_text=context_text,
+            budget_text=request.budget_text,
         )
 
         flight_results: list[TravelSearchResult] = []
@@ -195,7 +204,12 @@ class TripService:
             "tickets_text": tickets_text,
             "links_text": links_text,
             "entry_requirements_text": entry_requirements_text,
-            "summary_short_text": self._build_short_summary(effective_request, detected_needs, structured_results["flight_results"]),
+            "summary_short_text": self._build_short_summary(
+                effective_request,
+                detected_needs,
+                structured_results["flight_results"],
+                structured_results["housing_results"],
+            ),
             "flight_results": serialize_results(structured_results["flight_results"]),
             "housing_results": serialize_results(structured_results["housing_results"]),
             "activity_results": serialize_results(structured_results["activity_results"]),

@@ -106,6 +106,8 @@ class TripFormatter:
         lowered = price_text.lower()
         if "откройте ссылку" in lowered:
             return "Актуальные варианты и цены по ссылке"
+        if "open options" in lowered:
+            return "Open options via link"
         return price_text
 
     def _category_section(self, trip: dict, column: str) -> str:
