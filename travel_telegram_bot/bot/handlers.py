@@ -110,6 +110,15 @@ class BotHandlers:
         )
 
     @staticmethod
+    def _should_send_group_reply(context: ContextTypes.DEFAULT_TYPE, key: str, *, cooldown_seconds: int) -> bool:
+        now = time.time()
+        last = context.chat_data.get(key, 0)
+        if now - last < cooldown_seconds:
+            return False
+        context.chat_data[key] = now
+        return True
+
+    @staticmethod
     def _memory_usage_kb() -> int | None:
         try:
             import resource
@@ -860,11 +869,13 @@ class BotHandlers:
         if not signal.has_travel_intent:
             return
 
-        now = time.time()
-        last = context.chat_data.get("last_auto_reply", 0)
-
         active_trip = self.db.get_active_trip(chat.id)
         user = update.effective_user
+
+        if not signal.destination:
+            if self._should_send_group_reply(context, "last_clarify_reply", cooldown_seconds=600):
+                await message.reply_text(self.formatter.build_group_clarifying_question())
+            return
 
         if active_trip:
             current_dest = (active_trip.get("destination") or "").strip().lower()
@@ -882,12 +893,16 @@ class BotHandlers:
                     self.service._rebuild_trip(int(active_trip["id"]))
                     if "dates_text" in updates:
                         self.service._refresh_weather_for_trip(int(active_trip["id"]))
+                    if self._should_send_group_reply(context, "last_auto_update_reply", cooldown_seconds=420):
+                        refreshed_trip = self.db.get_trip_by_id(int(active_trip["id"]))
+                        if refreshed_trip:
+                            await message.reply_text(
+                                self.formatter.build_group_autodraft_reply(refreshed_trip),
+                                parse_mode=ParseMode.HTML,
+                            )
             return
 
-        if not signal.destination:
-            return
-
-        if now - last < 300:
+        if not self._should_send_group_reply(context, "last_auto_reply", cooldown_seconds=420):
             return
 
         trip_id = self.service.auto_draft_from_signal(
@@ -896,10 +911,12 @@ class BotHandlers:
             signal=signal,
         )
         if trip_id:
-            context.chat_data["last_auto_reply"] = now
-            await message.reply_text(
-                "🗺 Я собрал черновик по последним сообщениям чата: учёл обсуждение направления, дат и формата поездки. Откройте /summary, чтобы проверить план, или отключите авто-черновики через /settings."
-            )
+            trip = self.db.get_trip_by_id(int(trip_id))
+            if trip:
+                await message.reply_text(
+                    self.formatter.build_group_autodraft_reply(trip),
+                    parse_mode=ParseMode.HTML,
+                )
 
     async def trip_action_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query

@@ -244,8 +244,43 @@ def test_group_chat_analysis_uses_recent_messages_context(tmp_path) -> None:
     assert trip["destination"] == "Казань"
     assert trip["links_text"]
     assert "aviasales" in trip["links_text"].lower()
-    assert "booking" in trip["links_text"].lower()
-    assert "последним сообщениям чата" in message2.replies[-1]["text"]
+    assert "ostrovok" in trip["links_text"].lower()
+    assert "собрал черновик поездки" in message2.replies[-1]["text"].lower()
+
+
+def test_group_chat_without_destination_asks_short_question(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+
+    update, message = make_update(text="Ребята, давайте летом куда-нибудь съездим на несколько дней", chat_id=516)
+    asyncio.run(handlers.handle_group_message(update, context))
+
+    assert database.get_active_trip(516) is None
+    assert "Куда хотите поехать" in message.replies[-1]["text"]
+
+
+def test_group_chat_updates_existing_trip_without_creating_new_one(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+
+    create_update, _ = make_update(text="Ребята, поедем в Казань на 3 дня", chat_id=517)
+    asyncio.run(handlers.handle_group_message(create_update, context))
+
+    trip = database.get_active_trip(517)
+    assert trip is not None
+    original_trip_id = int(trip["id"])
+
+    update_message, message = make_update(text="Давайте тогда 12–14 июня и бюджет комфорт", chat_id=517)
+    asyncio.run(handlers.handle_group_message(update_message, context))
+
+    trips = database.list_trips(517)
+    active_trip = database.get_active_trip(517)
+    assert len(trips) == 1
+    assert active_trip is not None
+    assert int(active_trip["id"]) == original_trip_id
+    assert active_trip["dates_text"] == "12–14 июня"
+    assert active_trip["budget_text"] == "комфорт"
+    assert "где искать" in message.replies[-1]["text"].lower()
 
 
 def test_trips_and_select_trip_commands_restore_archived_trip(tmp_path) -> None:

@@ -15,26 +15,29 @@ def build_links_text(destination: str, dates_text: str, origin: str | None = Non
     encoded_origin = urllib.parse.quote(origin) if origin and origin != "не указано" else ""
     links: list[str] = []
 
-    booking_url = f"https://www.booking.com/searchresults.ru.html?ss={encoded_destination}"
-    ostrovok_url = f"https://ostrovok.ru/hotel/russia/{encoded_destination}/"
-    maps_url = f"https://www.google.com/maps/search/{encoded_destination}"
+    ostrovok_url = f"https://ostrovok.ru/hotel/search/?q={encoded_destination}"
+    yandex_travel_url = f"https://travel.yandex.ru/hotels/search?where={encoded_destination}"
+    maps_url = f"https://yandex.ru/maps/?text={encoded_destination}"
+    tutu_url = f"https://www.tutu.ru/poezda/order/?to={encoded_destination}"
 
     date_range = _parse_dates_range(dates_text)
     if date_range:
         start, end = date_range
         checkin = start.isoformat()
         checkout = end.isoformat()
-        booking_url = (
-            "https://www.booking.com/searchresults.ru.html?"
+        ostrovok_url = (
+            "https://ostrovok.ru/hotel/search/?"
             + urllib.parse.urlencode(
                 {
-                    "ss": destination,
+                    "q": destination,
                     "checkin": checkin,
                     "checkout": checkout,
-                    "group_adults": "2",
-                    "no_rooms": "1",
                 }
             )
+        )
+        yandex_travel_url = (
+            "https://travel.yandex.ru/hotels/search?"
+            + urllib.parse.urlencode({"where": destination, "checkinDate": checkin, "checkoutDate": checkout})
         )
         if encoded_origin:
             aviasales_url = (
@@ -55,8 +58,9 @@ def build_links_text(destination: str, dates_text: str, origin: str | None = Non
         )
 
     links.append(f"✈️ Билеты: {aviasales_url}")
-    links.append(f"🏨 Жильё: {booking_url}")
-    links.append(f"🛏 Альтернатива по жилью: {ostrovok_url}")
+    links.append(f"🚆 Поезда / дорога: {tutu_url}")
+    links.append(f"🏨 Жильё: {ostrovok_url}")
+    links.append(f"🧳 Альтернатива: {yandex_travel_url}")
     links.append(f"🗺 Карта и точки рядом: {maps_url}")
     links.append("💡 Точных live-цен в боте пока нет: ссылки ведут в реальные поиски, где можно увидеть актуальную стоимость.")
     return "\n".join(links)

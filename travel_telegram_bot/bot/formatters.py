@@ -49,44 +49,38 @@ class TripFormatter:
 
     def build_start_text(self) -> str:
         return (
-            "Привет! Я Telegram-бот для совместного планирования поездок.\n\n"
-            "Что умею уже сейчас:\n"
-            "• собираю поездку из свободного текста через /plan\n"
-            "• провожу по пошаговому мастеру через /newtrip\n"
-            "• показываю summary, маршрут, бюджет и логистику\n"
-            "• помогаю группе отметить участие и проголосовать за даты\n"
-            "• умею собирать авто-черновик из обсуждения в группе, если это разрешено в настройках\n\n"
-            "Быстрый старт:\n"
-            "• /plan Хочу на 4 дня в Казань, нас 5, бюджет средний, важны еда и прогулки\n"
-            "• /newtrip\n"
-            "• /summary\n"
-            "• /trips\n"
-            "• /help"
+            "Привет! Добавьте меня в чат поездки, включите авто-анализ в /settings и обсуждайте поездку обычными сообщениями.\n\n"
+            "Я быстро соберу черновик: куда, когда, сколько человек, какая погода и где искать билеты и жильё.\n\n"
+            "Главное:\n"
+            "• /summary — текущий план\n"
+            "• /status — отметить участие\n"
+            "• /settings — включить или выключить авто-анализ\n"
+            "• /trips — история поездок\n"
+            "• /help — короткая справка"
         )
 
     def build_help_text(self) -> str:
         return (
-            "<b>Что умеет бот</b>\n"
-            "• создать поездку из свободного текста: <code>/plan ...</code>\n"
-            "• провести по мастеру: <code>/newtrip</code>\n"
-            "• показать структуру поездки: <code>/brief</code>, <code>/summary</code>\n"
-            "• показать детали: <code>/itinerary</code>, <code>/budget</code>, <code>/route</code>, <code>/stay</code>, <code>/alternatives</code>\n"
-            "• координировать группу: <code>/status</code>, <code>/participants</code>, <code>/adddate</code>\n"
-            "• управлять поведением чата: <code>/settings</code>\n"
-            "• посмотреть историю и вернуть архивную поездку: <code>/trips</code>, <code>/select_trip ID</code>\n\n"
-            "<b>Поддерживаемые сценарии MVP</b>\n"
-            "• короткие поездки друзей или коллег на 2-10 дней\n"
-            "• одна активная поездка на чат\n"
-            "• согласование состава, дат и базового travel-brief внутри Telegram\n\n"
-            "<b>Что важно знать</b>\n"
+            "<b>Как использовать</b>\n"
+            "1. Добавьте бота в групповой чат.\n"
+            "2. Включите авто-анализ в <code>/settings</code>.\n"
+            "3. Обсуждайте поездку обычными сообщениями.\n"
+            "4. Открывайте <code>/summary</code>, когда нужен текущий план.\n\n"
+            "<b>Основные команды</b>\n"
+            "• <code>/summary</code> — сводка по активной поездке\n"
+            "• <code>/status</code> — отметить участие\n"
+            "• <code>/settings</code> — режим чата\n"
+            "• <code>/trips</code> — история поездок\n"
+            "• <code>/select_trip ID</code> — вернуть поездку из архива\n\n"
+            "<b>Что бот делает сейчас</b>\n"
+            "• собирает поездку из переписки\n"
+            "• показывает погоду\n"
+            "• даёт русские ссылки на билеты и жильё\n"
+            "• хранит активную поездку и историю\n\n"
+            "<b>Ограничения</b>\n"
             "• бот не бронирует билеты и жильё\n"
-            "• точных live-цен в самом боте пока нет, но в summary есть ссылки на реальные поиски билетов и жилья\n"
-            "• авто-анализ групповых сообщений работает только если включён в /settings\n"
-            "• для чтения обычных сообщений в группе у бота должен быть отключён privacy mode в BotFather\n\n"
-            "<b>Полезные команды</b>\n"
-            "• <code>/setdestination</code>, <code>/setdates</code>, <code>/interests</code>, <code>/notes</code> для быстрых правок\n"
-            "• <code>/share</code> чтобы отправить ссылку на текущий план\n"
-            "• <code>/archive_trip</code> чтобы закрыть активную поездку без удаления истории"
+            "• цены смотрятся по ссылкам на внешних сайтах\n"
+            "• для чтения обычных сообщений в группе нужен выключенный privacy mode в BotFather"
         )
 
     def build_settings_text(self, chat_id: int) -> str:
@@ -111,11 +105,8 @@ class TripFormatter:
 
     def build_trip_created_text(self, *, replaced_trip: bool) -> str:
         if replaced_trip:
-            return (
-                "Новая поездка создана и стала активной. Предыдущая активная поездка переведена в архив, "
-                "история сохранена."
-            )
-        return "Поездка создана и сохранена как активная для этого чата."
+            return "Собрал новый план и сделал его активным. Предыдущий сохранён в истории."
+        return "Собрал новый план для этого чата."
 
     def build_status_updated_text(self, status: str) -> str:
         mapping = {
@@ -149,6 +140,24 @@ class TripFormatter:
         lines.append("Чтобы сделать поездку активной, используйте <code>/select_trip ID</code>.")
         return "\n".join(lines)
 
+    def build_group_clarifying_question(self) -> str:
+        return "Похоже, вы обсуждаете поездку. Куда хотите поехать?"
+
+    def build_group_autodraft_reply(self, trip: dict) -> str:
+        weather_text = (trip.get("weather_text") or "").strip()
+        links_text = (trip.get("links_text") or "").strip().splitlines()
+        useful_links = "\n".join(links_text[:3]) if links_text else "Ссылки пока не собраны."
+        return (
+            f"🧭 Собрал черновик поездки\n"
+            f"Куда: <b>{html.escape(trip['destination'] or 'не указано')}</b>\n"
+            f"Когда: <b>{html.escape(trip['dates_text'] or 'уточняется')}</b>\n"
+            f"Людей: <b>{int(trip['group_size'] or 0)}</b>\n"
+            f"Бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
+            + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
+            + f"\n\n<b>Где искать</b>\n{html.escape(useful_links)}"
+            + "\n\nОткройте /summary, если нужен полный план."
+        )
+
     def _build_brief_html(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
@@ -174,7 +183,7 @@ class TripFormatter:
         if not trip:
             return "<b>Поездка не найдена.</b>"
 
-        itinerary_preview = self._escape_block(self._preview_multiline(trip["itinerary_text"] or "", max_blocks=2))
+        itinerary_preview = self._escape_block(self._preview_multiline(trip["itinerary_text"] or "", max_blocks=1))
         stay_preview = self._escape_block(self._preview_multiline(trip["stay_text"] or "", max_blocks=1))
         context_preview = self._escape_block(self._preview_multiline(trip["context_text"] or "", max_blocks=1))
         notes_text = self._escape_block(trip["notes"] or "—")
@@ -192,7 +201,7 @@ class TripFormatter:
             f"💸 Целевой бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
             f"🎯 Интересы: <b>{html.escape(trip['interests_text'] or 'не указаны')}</b>\n\n"
             f"<b>Коротко о направлении</b>\n{context_preview}\n\n"
-            f"<b>Черновик маршрута</b>\n{itinerary_preview}\n\n"
+            f"<b>Маршрут</b>\n{itinerary_preview}\n\n"
             f"<b>Где жить</b>\n{stay_preview}\n\n"
             f"<b>Ориентир по бюджету</b>\n{html.escape(trip['budget_total_text'] or 'не рассчитан')}\n\n"
             f"<b>Участники</b>\n"
