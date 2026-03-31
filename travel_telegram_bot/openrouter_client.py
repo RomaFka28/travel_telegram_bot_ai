@@ -12,9 +12,11 @@ from travel_planner import TripPlan, TripRequest
 @dataclass(slots=True)
 class OpenRouterConfig:
     api_key: str
-    model: str = "openrouter/free"
+    model: str = "stepfun/step-3.5-flash:free"
     base_url: str = "https://openrouter.ai/api/v1/chat/completions"
     timeout_s: int = 60
+    use_web_search: bool = True
+    web_max_results: int = 3
 
 
 class OpenRouterError(RuntimeError):
@@ -25,18 +27,15 @@ def _extract_json_object(text: str) -> dict:
     if not text:
         raise OpenRouterError("Empty LLM response.")
 
-    # If model wrapped JSON in a code fence, unwrap it.
     fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text, flags=re.IGNORECASE)
     if fenced:
         text = fenced.group(1).strip()
 
-    # Try direct JSON first.
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Fallback: find the first {...} block.
     brace = re.search(r"(\{[\s\S]*\})", text)
     if not brace:
         raise OpenRouterError("LLM did not return JSON object.")
@@ -46,30 +45,33 @@ def _extract_json_object(text: str) -> dict:
         raise OpenRouterError(f"Invalid JSON from LLM: {exc}") from exc
 
 
-def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPlan:
-    if not config.api_key:
-        raise OpenRouterError("OPENROUTER_API_KEY is missing.")
-
+def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> dict:
     system = (
-        "Ты — AI travel-помощник. Отвечай по-русски. Все суммы указывай в RUB (₽).\n"
-        "Верни ТОЛЬКО валидный JSON-объект (без markdown и без пояснений) со строгими ключами:\n"
-        "context_text, itinerary_text, logistics_text, stay_text, alternatives_text, budget_breakdown_text, budget_total_text.\n"
-        "itinerary_text: маршрут по дням в формате 'День 1. ...\\nДень 2. ...'.\n"
-        "budget_breakdown_text: подробная разбивка + строка 'Итого ориентир: ...'.\n"
-        "budget_total_text: одна строка с итогом (например '≈ 85 000–120 000 ₽ на человека').\n"
-        "Если каких-то данных нет, честно дай разумный ориентир и предположения."
+        "You are an AI travel assistant for Russian-speaking users. "
+        "Reply in Russian. Return only valid JSON with no markdown. "
+        "Use these exact string keys: "
+        "context_text, itinerary_text, logistics_text, stay_text, "
+        "alternatives_text, budget_breakdown_text, budget_total_text. "
+        "All budget amounts should be in RUB. "
+        "If web search is available, use fresh public information when it helps. "
+        "Do not invent exact live prices. If exact prices are unavailable, give an honest range or guidance. "
+        "Keep itinerary_text in the format 'День 1. ...\\nДень 2. ...'. "
+        "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Итого ориентир:'. "
+        "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека'."
     )
 
     user = (
-        "Собери черновик поездки по данным:\n"
-        f"- направление: {request.destination}\n"
-        f"- откуда: {request.origin}\n"
-        f"- даты (текст): {request.dates_text}\n"
-        f"- длительность: {request.days_count} дней\n"
-        f"- группа: {request.group_size} человек\n"
-        f"- бюджет (как написал пользователь): {request.budget_text}\n"
-        f"- интересы: {request.interests_text}\n"
-        f"- заметки/контекст: {request.notes}\n"
+        "Build a draft trip plan from this data:\n"
+        f"- destination: {request.destination}\n"
+        f"- origin: {request.origin}\n"
+        f"- dates_text: {request.dates_text}\n"
+        f"- days_count: {request.days_count}\n"
+        f"- group_size: {request.group_size}\n"
+        f"- budget_text: {request.budget_text}\n"
+        f"- interests_text: {request.interests_text}\n"
+        f"- notes: {request.notes}\n"
+        "Keep the plan practical for a Telegram travel bot. "
+        "Prefer concise, useful travel guidance over generic marketing language."
     )
 
     payload = {
@@ -82,6 +84,22 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
         "max_tokens": 1400,
     }
 
+    if config.use_web_search:
+        payload["plugins"] = [
+            {
+                "id": "web",
+                "max_results": max(1, config.web_max_results),
+            }
+        ]
+
+    return payload
+
+
+def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPlan:
+    if not config.api_key:
+        raise OpenRouterError("OPENROUTER_API_KEY is missing.")
+
+    payload = build_trip_plan_payload(config, request)
     data = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(
         url=config.base_url,
@@ -105,7 +123,7 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
     try:
         parsed = json.loads(raw)
         content = parsed["choices"][0]["message"]["content"]
-    except Exception as exc:  # noqa: BLE001 - want robust error surface
+    except Exception as exc:  # noqa: BLE001
         raise OpenRouterError(f"Unexpected OpenRouter response: {raw[:5000]}") from exc
 
     obj = _extract_json_object(content)
@@ -118,7 +136,7 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
         "budget_breakdown_text",
         "budget_total_text",
     ]
-    missing = [k for k in required if not isinstance(obj.get(k), str) or not obj.get(k).strip()]
+    missing = [key for key in required if not isinstance(obj.get(key), str) or not obj.get(key).strip()]
     if missing:
         raise OpenRouterError(f"LLM JSON missing fields: {', '.join(missing)}")
 
@@ -131,4 +149,3 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
         budget_breakdown_text=obj["budget_breakdown_text"].strip(),
         budget_total_text=obj["budget_total_text"].strip(),
     )
-

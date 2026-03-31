@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 class LLMPlannerSettings:
     openrouter_api_key: str
     openrouter_model: str = "stepfun/step-3.5-flash:free"
+    openrouter_web_search: bool = True
 
 
 class LLMTravelPlanner(TravelPlanner):
@@ -24,6 +25,7 @@ class LLMTravelPlanner(TravelPlanner):
         config = OpenRouterConfig(
             api_key=self._settings.openrouter_api_key,
             model=self._settings.openrouter_model or "stepfun/step-3.5-flash:free",
+            use_web_search=self._settings.openrouter_web_search,
         )
         return generate_trip_plan(config, request)
 

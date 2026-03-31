@@ -70,6 +70,7 @@ def build_application():
             LLMPlannerSettings(
                 openrouter_api_key=settings.openrouter_api_key,
                 openrouter_model=settings.openrouter_model,
+                openrouter_web_search=settings.openrouter_web_search,
             )
         )
     else:

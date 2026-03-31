@@ -98,6 +98,7 @@ travel_telegram_bot/
    - `TELEGRAM_BOT_TOKEN`
    - `DATABASE_URL` или `DATABASE_PATH`
    - `OPENROUTER_API_KEY` и `OPENROUTER_MODEL`, если нужен `/planai`
+   - `OPENROUTER_WEB_SEARCH=true`, если хотите, чтобы LLM подтягивал более свежую travel-информацию через OpenRouter web search
 3. Установите зависимости:
 
 ```bash
@@ -117,6 +118,8 @@ python app.py
 - `TELEGRAM_BOT_TOKEN`
 - `DATABASE_URL` для Postgres в production
 - `OPENROUTER_API_KEY`, если используется `/planai`
+- `OPENROUTER_MODEL=stepfun/step-3.5-flash:free`, если нужен быстрый бесплатный LLM-режим
+- `OPENROUTER_WEB_SEARCH=true`, если нужен доступ модели к web search для более свежих travel-ответов
 - `LOG_LEVEL`
 - `PLAYWRIGHT_ENABLED=true`, только если позже захотите включить браузерный слой для `/hotels`
 - `PLAYWRIGHT_TIMEOUT_MS`, опционально для Playwright-режима
