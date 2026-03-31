@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from datetime import datetime
@@ -283,15 +283,18 @@ class TripService:
     ) -> int | None:
         if not signal.destination:
             return None
-        interests_text = ", ".join(signal.interests) if signal.interests else "\u0433\u043e\u0440\u043e\u0434, \u0435\u0434\u0430"
+        inferred_group_size = signal.group_size or (max(2, len(signal.participants_mentioned)) if signal.participants_mentioned else 2)
+        inferred_days_count = signal.days_count or 3
+        inferred_budget = signal.budget_hint or "Эконом"
+        interests_text = ", ".join(signal.interests) if signal.interests else "город, еда"
         request = self._planner.build_request_from_fields(
-            title=f"{signal.destination} \u2022 3 \u0434\u043d. \u2022 2 \u0447\u0435\u043b.",
+            title=f"{signal.destination} • {inferred_days_count} дн. • {inferred_group_size} чел.",
             destination=signal.destination,
-            origin=signal.origin or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e",
-            dates_text=signal.dates_text or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u044b",
-            days_count=3,
-            group_size=max(2, len(signal.participants_mentioned)) if signal.participants_mentioned else 2,
-            budget_text=signal.budget_hint or "\u0411\u0438\u0437\u043d\u0435\u0441",
+            origin=signal.origin or "не указано",
+            dates_text=signal.dates_text or "не указаны",
+            days_count=inferred_days_count,
+            group_size=inferred_group_size,
+            budget_text=inferred_budget,
             interests_text=interests_text,
             notes=signal.raw_text,
             source_prompt=signal.raw_text,

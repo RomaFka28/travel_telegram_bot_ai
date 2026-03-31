@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
@@ -21,6 +21,8 @@ class ChatSignal:
     destination: str | None
     origin: str | None
     dates_text: str | None
+    days_count: int | None = None
+    group_size: int | None = None
     participants_mentioned: list[str] = field(default_factory=list)
     budget_hint: str | None = None
     interests: list[str] = field(default_factory=list)
@@ -49,30 +51,59 @@ class GroupChatAnalyzer:
 
     def analyze(self, text: str) -> ChatSignal:
         normalized = text.lower().strip()
-        has_intent = any(trigger in normalized for trigger in TRAVEL_TRIGGERS)
 
         destination: str | None = None
         origin: str | None = None
         dates_text: str | None = None
+        days_count: int | None = None
+        group_size: int | None = None
         budget_hint: str | None = None
         interests: list[str] = []
         detected_needs = sorted(detect_link_needs(text))
         need_strengths = self._score_needs(normalized)
 
-        if has_intent:
-            try:
-                destination = self._planner._extract_destination(text)
-            except Exception:
-                pass
-            try:
-                origin = self._planner._extract_origin(text)
-            except Exception:
-                pass
+        try:
+            destination = self._planner._extract_destination(text)
+        except Exception:
+            pass
+        try:
+            origin = self._planner._extract_origin(text)
+        except Exception:
+            pass
+        try:
             raw_dates = self._planner._extract_dates(text)
             dates_text = raw_dates if raw_dates != "не указаны" else None
+        except Exception:
+            pass
+        try:
+            parsed_days = self._planner._extract_days_count(text)
+            days_count = parsed_days if parsed_days != 3 or self._has_explicit_days(text) else None
+        except Exception:
+            pass
+        try:
+            parsed_group_size = self._planner._extract_group_size(text)
+            group_size = parsed_group_size if self._has_explicit_group_size(text) else None
+        except Exception:
+            pass
+        try:
             raw_budget = self._planner._extract_budget(text)
-            budget_hint = raw_budget if raw_budget != "Бизнес" else None
+            budget_hint = raw_budget if raw_budget != "Бизнес" or self._has_explicit_budget(text) else None
+        except Exception:
+            pass
+        try:
             interests = self._planner._extract_interests(text)
+        except Exception:
+            pass
+
+        has_intent = self._looks_like_trip_request(
+            normalized,
+            destination=destination,
+            origin=origin,
+            dates_text=dates_text,
+            days_count=days_count,
+            group_size=group_size,
+            budget_hint=budget_hint,
+        )
 
         participants = self._extract_names(text)
 
@@ -81,6 +112,8 @@ class GroupChatAnalyzer:
             destination=destination,
             origin=origin,
             dates_text=dates_text,
+            days_count=days_count,
+            group_size=group_size,
             participants_mentioned=participants,
             budget_hint=budget_hint,
             interests=interests,
@@ -143,3 +176,72 @@ class GroupChatAnalyzer:
             if score > 0:
                 scores[category] = score
         return scores
+
+    def _looks_like_trip_request(
+        self,
+        normalized_text: str,
+        *,
+        destination: str | None,
+        origin: str | None,
+        dates_text: str | None,
+        days_count: int | None,
+        group_size: int | None,
+        budget_hint: str | None,
+    ) -> bool:
+        if any(trigger in normalized_text for trigger in TRAVEL_TRIGGERS):
+            return True
+        explicit_signals = sum(1 for value in (destination, origin, dates_text, budget_hint) if value)
+        if days_count is not None:
+            explicit_signals += 1
+        if group_size is not None:
+            explicit_signals += 1
+        if destination and explicit_signals >= 3:
+            return True
+        if destination and origin and (dates_text or days_count is not None):
+            return True
+        if re.search(r"\bиз\s+[A-Za-zА-Яа-яЁё\- ]+\b.*\bв\s+[A-Za-zА-Яа-яЁё\- ]+", normalized_text, flags=re.IGNORECASE):
+            return True
+        return False
+
+    @staticmethod
+    def _has_explicit_days(text: str) -> bool:
+        return bool(
+            re.search(
+                r"\b\d{1,2}\s*(?:дн(?:я|ей)?|сут(?:ок)?|ноч(?:ь|и|ей)?)\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _has_explicit_group_size(text: str) -> bool:
+        lowered = text.lower()
+        if any(token in lowered for token in ("вдвоем", "вдвоём", "втроем", "втроём", "нас двое", "нас трое")):
+            return True
+        return bool(
+            re.search(
+                r"\b(?:нас|мы)\s+\d{1,2}\b|\b\d{1,2}\s*(?:чел(?:овек)?|человека|человек)\b|\bкомпан(?:ия|ией)\s+из\s+\d{1,2}\b",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )
+
+    @staticmethod
+    def _has_explicit_budget(text: str) -> bool:
+        lowered = text.lower()
+        return any(
+            token in lowered
+            for token in (
+                "бюджет",
+                "эконом",
+                "бизнес",
+                "первый класс",
+                "до ",
+                "на ",
+                "от ",
+                "не ограничен",
+                "без ограничений",
+                "подешевле",
+                "дешевле",
+            )
+        )

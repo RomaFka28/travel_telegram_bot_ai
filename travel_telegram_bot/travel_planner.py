@@ -731,6 +731,22 @@ class TravelPlanner:
 
     @staticmethod
     def _extract_dates(text: str) -> str:
+        numeric_range = re.search(
+            r"\b(?:с\s*)?(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s*(?:по|до|-|–|—)\s*(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if numeric_range:
+            return f"{numeric_range.group(1)} - {numeric_range.group(2)}"
+
+        numeric_single = re.search(
+            r"\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if numeric_single:
+            return numeric_single.group(0)
+
         direct = re.search(
             r"\b\d{1,2}\s*(?:-|–|—|до)?\s*\d{0,2}\s*(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)",
             text,
