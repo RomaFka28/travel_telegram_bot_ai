@@ -1,10 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 from database import Database
-from travel_links import build_links_text
+from travel_links import build_links_text, build_structured_link_results, detect_link_needs
+from travel_result_models import TravelSearchResult, serialize_needs, serialize_results, trim_results
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from weather_service import WeatherError, fetch_weather_summary
@@ -26,20 +27,67 @@ class TripService:
 
     def _request_from_trip_row(self, trip) -> dict[str, str | int]:
         return {
-            "title": trip["title"] or "Новая поездка",
+            "title": trip["title"] or "\u041d\u043e\u0432\u0430\u044f \u043f\u043e\u0435\u0437\u0434\u043a\u0430",
             "destination": trip["destination"] or "",
-            "origin": trip["origin"] or "не указано",
-            "dates_text": trip["dates_text"] or "не указаны",
+            "origin": trip["origin"] or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e",
+            "dates_text": trip["dates_text"] or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u044b",
             "days_count": int(trip["days_count"] or 3),
             "group_size": int(trip["group_size"] or 2),
-            "budget_text": trip["budget_text"] or "средний",
-            "interests_text": trip["interests_text"] or "город, еда",
+            "budget_text": trip["budget_text"] or "\u0441\u0440\u0435\u0434\u043d\u0438\u0439",
+            "interests_text": trip["interests_text"] or "\u0433\u043e\u0440\u043e\u0434, \u0435\u0434\u0430",
             "notes": trip["notes"] or "",
             "source_prompt": trip["source_prompt"] or "",
         }
 
-    def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
-        notes = request.notes if notes_override is None else notes_override
+    def _build_short_summary(self, request, detected_needs: list[str], flight_results: list[TravelSearchResult]) -> str:
+        lines = [
+            f"\u041a\u0443\u0434\u0430: {request.destination or '\u0443\u0442\u043e\u0447\u043d\u044f\u0435\u0442\u0441\u044f'}",
+            f"\u041a\u043e\u0433\u0434\u0430: {request.dates_text or '\u0443\u0442\u043e\u0447\u043d\u044f\u0435\u0442\u0441\u044f'}",
+            f"\u041b\u044e\u0434\u0435\u0439: {request.group_size}",
+            f"\u0411\u044e\u0434\u0436\u0435\u0442: {request.budget_text or '\u0443\u0442\u043e\u0447\u043d\u044f\u0435\u0442\u0441\u044f'}",
+        ]
+        if detected_needs:
+            labels = {
+                "tickets": "\u0431\u0438\u043b\u0435\u0442\u044b",
+                "housing": "\u0436\u0438\u043b\u044c\u0451",
+                "excursions": "\u044d\u043a\u0441\u043a\u0443\u0440\u0441\u0438\u0438",
+                "road": "\u0434\u043e\u0440\u043e\u0433\u0430",
+                "car_rental": "\u0430\u0440\u0435\u043d\u0434\u0430 \u0430\u0432\u0442\u043e",
+                "bike_rental": "\u0430\u0440\u0435\u043d\u0434\u0430 \u0431\u0430\u0439\u043a\u0430",
+                "transfers": "\u0442\u0440\u0430\u043d\u0441\u0444\u0435\u0440\u044b",
+            }
+            lines.append("\u041e\u0431\u0441\u0443\u0436\u0434\u0430\u043b\u0438: " + ", ".join(labels.get(need, need) for need in detected_needs))
+        if flight_results:
+            lines.append(f"\u041b\u0443\u0447\u0448\u0438\u0439 \u0431\u0438\u043b\u0435\u0442: {flight_results[0].price_text}")
+        return "\n".join(lines)
+
+    def _collect_structured_results(self, request) -> tuple[list[str], dict[str, list[TravelSearchResult]], str, str]:
+        context_text = f"{request.source_prompt}\n{request.notes}".strip()
+        detected_needs = sorted(detect_link_needs(context_text))
+        structured = build_structured_link_results(
+            request.destination,
+            request.dates_text,
+            request.origin,
+            context_text=context_text,
+        )
+
+        flight_results: list[TravelSearchResult] = []
+        if self._flight_provider:
+            flight_results = self._flight_provider.search_results(
+                origin=request.origin,
+                destination=request.destination,
+                dates_text=request.dates_text,
+                budget_text=request.budget_text,
+                group_size=request.group_size,
+            )
+        if flight_results:
+            structured["tickets"] = trim_results(flight_results)
+
+        housing_results = trim_results(structured.get("housing", []))
+        activity_results = trim_results(structured.get("excursions", []))
+        transport_results = trim_results(structured.get("road", []) + structured.get("transfers", []))
+        rental_results = trim_results(structured.get("car_rental", []) + structured.get("bike_rental", []))
+
         tickets_text = ""
         if self._flight_provider:
             tickets_text = self._flight_provider.build_ticket_snapshot(
@@ -49,17 +97,46 @@ class TripService:
                 budget_text=request.budget_text,
                 group_size=request.group_size,
             )
+        links_text = build_links_text(
+            request.destination,
+            request.dates_text,
+            request.origin,
+            context_text=context_text,
+        )
+        return detected_needs, {
+            "flight_results": trim_results(flight_results),
+            "housing_results": housing_results,
+            "activity_results": activity_results,
+            "transport_results": transport_results,
+            "rental_results": rental_results,
+        }, tickets_text, links_text
+
+    def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
+        notes = request.notes if notes_override is None else notes_override
+        effective_request = self._planner.build_request_from_fields(
+            title=request.title,
+            destination=request.destination,
+            origin=request.origin,
+            dates_text=request.dates_text,
+            days_count=request.days_count,
+            group_size=request.group_size,
+            budget_text=request.budget_text,
+            interests_text=request.interests_text,
+            notes=notes,
+            source_prompt=request.source_prompt,
+        )
+        detected_needs, structured_results, tickets_text, links_text = self._collect_structured_results(effective_request)
         return {
-            "title": request.title,
-            "destination": request.destination,
-            "origin": request.origin,
-            "dates_text": request.dates_text,
-            "days_count": request.days_count,
-            "group_size": request.group_size,
-            "budget_text": request.budget_text,
-            "interests_text": request.interests_text,
+            "title": effective_request.title,
+            "destination": effective_request.destination,
+            "origin": effective_request.origin,
+            "dates_text": effective_request.dates_text,
+            "days_count": effective_request.days_count,
+            "group_size": effective_request.group_size,
+            "budget_text": effective_request.budget_text,
+            "interests_text": effective_request.interests_text,
             "notes": notes,
-            "source_prompt": request.source_prompt,
+            "source_prompt": effective_request.source_prompt,
             "context_text": plan.context_text,
             "itinerary_text": plan.itinerary_text,
             "logistics_text": plan.logistics_text,
@@ -68,12 +145,15 @@ class TripService:
             "budget_breakdown_text": plan.budget_breakdown_text,
             "budget_total_text": plan.budget_total_text,
             "tickets_text": tickets_text,
-            "links_text": build_links_text(
-                request.destination,
-                request.dates_text,
-                request.origin,
-                context_text=f"{request.source_prompt}\n{notes}",
-            ),
+            "links_text": links_text,
+            "summary_short_text": self._build_short_summary(effective_request, detected_needs, structured_results["flight_results"]),
+            "flight_results": serialize_results(structured_results["flight_results"]),
+            "housing_results": serialize_results(structured_results["housing_results"]),
+            "activity_results": serialize_results(structured_results["activity_results"]),
+            "transport_results": serialize_results(structured_results["transport_results"]),
+            "rental_results": serialize_results(structured_results["rental_results"]),
+            "detected_needs": serialize_needs(detected_needs),
+            "results_updated_at": datetime.utcnow().isoformat(timespec="seconds"),
             "status": "active",
         }
 
@@ -86,9 +166,9 @@ class TripService:
         budget_text = self._planner._extract_budget(edit_text) if self._has_budget_hint(edit_text) else str(current["budget_text"])
         interests = self._planner._extract_interests(edit_text)
         interests_text = ", ".join(interests) if interests else str(current["interests_text"])
-        source_prompt = f"{current['source_prompt']}\nИзменение: {edit_text}".strip()
+        source_prompt = f"{current['source_prompt']}\n\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435: {edit_text}".strip()
         return self._planner.build_request_from_fields(
-            title=f"{destination} • {days_count} дн. • {int(current['group_size'])} чел.",
+            title=f"{destination} \u2022 {days_count} \u0434\u043d. \u2022 {int(current['group_size'])} \u0447\u0435\u043b.",
             destination=destination,
             origin=origin,
             dates_text=dates_text,
@@ -133,21 +213,17 @@ class TripService:
         created_by: int | None,
         signal: "ChatSignal",
     ) -> int | None:
-        """
-        Creates a minimal trip from a ChatSignal.
-        Returns trip_id or None if destination is missing.
-        """
         if not signal.destination:
             return None
-        interests_text = ", ".join(signal.interests) if signal.interests else "город, еда"
+        interests_text = ", ".join(signal.interests) if signal.interests else "\u0433\u043e\u0440\u043e\u0434, \u0435\u0434\u0430"
         request = self._planner.build_request_from_fields(
-            title=f"{signal.destination} • 3 дн. • 2 чел.",
+            title=f"{signal.destination} \u2022 3 \u0434\u043d. \u2022 2 \u0447\u0435\u043b.",
             destination=signal.destination,
-            origin=signal.origin or "не указано",
-            dates_text=signal.dates_text or "не указаны",
+            origin=signal.origin or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e",
+            dates_text=signal.dates_text or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u044b",
             days_count=3,
             group_size=max(2, len(signal.participants_mentioned)) if signal.participants_mentioned else 2,
-            budget_text=signal.budget_hint or "средний",
+            budget_text=signal.budget_hint or "\u0441\u0440\u0435\u0434\u043d\u0438\u0439",
             interests_text=interests_text,
             notes=signal.raw_text,
             source_prompt=signal.raw_text,
@@ -177,12 +253,12 @@ class TripService:
         return any(
             keyword in lowered
             for keyword in (
-                "бюдж",
-                "эконом",
-                "дешев",
-                "средн",
-                "комфорт",
-                "до ",
+                "\u0431\u044e\u0434\u0436",
+                "\u044d\u043a\u043e\u043d\u043e\u043c",
+                "\u0434\u0435\u0448\u0435\u0432",
+                "\u0441\u0440\u0435\u0434\u043d",
+                "\u043a\u043e\u043c\u0444\u043e\u0440\u0442",
+                "\u0434\u043e ",
             )
         )
 
@@ -194,17 +270,17 @@ class TripService:
         return any(
             keyword in lowered
             for keyword in (
-                "январ",
-                "феврал",
-                "март",
-                "апрел",
-                "май",
-                "июн",
-                "июл",
-                "август",
-                "сентябр",
-                "октябр",
-                "ноябр",
-                "декабр",
+                "\u044f\u043d\u0432\u0430\u0440",
+                "\u0444\u0435\u0432\u0440\u0430\u043b",
+                "\u043c\u0430\u0440\u0442",
+                "\u0430\u043f\u0440\u0435\u043b",
+                "\u043c\u0430\u0439",
+                "\u0438\u044e\u043d",
+                "\u0438\u044e\u043b",
+                "\u0430\u0432\u0433\u0443\u0441\u0442",
+                "\u0441\u0435\u043d\u0442\u044f\u0431\u0440",
+                "\u043e\u043a\u0442\u044f\u0431\u0440",
+                "\u043d\u043e\u044f\u0431\u0440",
+                "\u0434\u0435\u043a\u0430\u0431\u0440",
             )
         ) or bool(re.search(r"\b\d{1,2}\s*(?:-|\u2013|\u2014|\u0434\u043e)\s*\d{1,2}\b", text))

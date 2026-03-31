@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from travel_links import build_links_map
+from travel_links import build_structured_link_results
 
 
 @dataclass(slots=True)
@@ -29,39 +29,22 @@ class HousingSearchProvider(Protocol):
 
 class LinkOnlyHousingSearchProvider:
     async def search(self, *, destination: str, dates_text: str, group_size: int) -> HousingSearchResponse:
-        links = build_links_map(destination, dates_text, origin=None, context_text="жилье отель квартира суточно турбаза")
+        structured = build_structured_link_results(
+            destination,
+            dates_text,
+            origin=None,
+            context_text="жилье отель квартира суточно турбаза",
+        )
         stay_style = "апартаменты / дом" if group_size >= 4 else "отель или студия"
         results = [
             HousingResult(
-                title="Поиск жилья на Островке",
-                price_text=f"Смотрите актуальные цены, базовый формат: {stay_style}",
-                url=links.get("🏨 Жильё", ""),
-                source="Островок",
-            ),
-            HousingResult(
-                title="Посуточная аренда на Суточно",
-                price_text="Хорошо подходит для компаний и апартаментов",
-                url=links.get("🏠 Посуточно", ""),
-                source="Суточно",
-            ),
-            HousingResult(
-                title="Поиск жилья на Яндекс Путешествиях",
-                price_text="Удобно для сравнения отелей и дат",
-                url=links.get("🧳 Альтернатива", ""),
-                source="Яндекс Путешествия",
-            ),
-            HousingResult(
-                title="Короткая аренда на Avito Путешествия",
-                price_text="Подходит для квартир, домов и нестандартных вариантов",
-                url=links.get("🏘 Avito Путешествия", ""),
-                source="Avito Путешествия",
-            ),
-            HousingResult(
-                title="Загородный отдых через Мир Турбаз",
-                price_text="Подходит, если в приоритете базы отдыха и природа",
-                url=links.get("🌲 Мир Турбаз", ""),
-                source="Мир Турбаз",
-            ),
+                title=item.title,
+                price_text=item.price_text if index else f"Смотрите актуальные цены, базовый формат: {stay_style}",
+                url=item.url,
+                source=item.source,
+                note=item.note,
+            )
+            for index, item in enumerate(structured.get("housing", []))
         ]
         return HousingSearchResponse(
             mode="links_only",

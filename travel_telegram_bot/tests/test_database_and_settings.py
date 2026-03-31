@@ -98,3 +98,25 @@ def test_activate_trip_restores_archived_trip(tmp_path) -> None:
     assert active_trip["id"] == first_trip_id
     assert second_trip is not None
     assert second_trip["status"] == "archived"
+
+
+def test_trip_schema_keeps_structured_result_columns(tmp_path) -> None:
+    database = Database(str(tmp_path / "structured.db"))
+    database.init_db()
+
+    trip_id = database.create_trip(
+        chat_id=91,
+        created_by=1,
+        payload={
+            **_sample_payload("Казань"),
+            "flight_results": '[{"title":"Тест","price_text":"12 300 ₽","url":"https://example.com","source":"demo"}]',
+            "detected_needs": '["tickets","housing"]',
+            "summary_short_text": "Куда: Казань",
+        },
+    )
+
+    trip = database.get_trip_by_id(trip_id)
+    assert trip is not None
+    assert "Тест" in (trip["flight_results"] or "")
+    assert "housing" in (trip["detected_needs"] or "")
+    assert trip["summary_short_text"] == "Куда: Казань"

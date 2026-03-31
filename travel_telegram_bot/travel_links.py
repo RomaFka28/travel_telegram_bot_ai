@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import urllib.parse
 
+from travel_result_models import TravelSearchResult, trim_results
 from weather_service import _parse_dates_range
 
 
@@ -13,6 +14,16 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "car_rental": ("аренд", "машин", "авто", "тачк", "прокат авто", "car rent"),
     "bike_rental": ("мото", "байк", "скутер", "мопед", "прокат байка", "прокат мото"),
     "transfers": ("трансфер", "такси", "из аэропорта", "в аэропорт"),
+}
+
+CATEGORY_TITLES: dict[str, str] = {
+    "tickets": "Билеты и перелёт",
+    "housing": "Жильё и размещение",
+    "excursions": "Экскурсии и активности",
+    "road": "Дорога по земле",
+    "car_rental": "Аренда авто",
+    "bike_rental": "Аренда мото / байка",
+    "transfers": "Трансферы",
 }
 
 
@@ -162,6 +173,58 @@ def build_links_map(
         link_items = _ticket_links(destination, origin, start_date, end_date) + _housing_links(destination, start_date, end_date)[:2]
 
     return dict(link_items)
+
+
+def build_structured_link_results(
+    destination: str,
+    dates_text: str,
+    origin: str | None = None,
+    *,
+    context_text: str = "",
+) -> dict[str, list[TravelSearchResult]]:
+    destination = (destination or "").strip()
+    origin = (origin or "").strip()
+    if not destination:
+        return {}
+
+    date_range = _parse_dates_range(dates_text)
+    start_date = date_range[0].isoformat() if date_range else None
+    end_date = date_range[1].isoformat() if date_range else None
+    needs = detect_link_needs(context_text)
+    if not needs:
+        needs = {"tickets", "housing"}
+
+    category_links: dict[str, list[tuple[str, str]]] = {}
+    if "tickets" in needs:
+        category_links["tickets"] = _ticket_links(destination, origin, start_date, end_date)
+    if "housing" in needs:
+        category_links["housing"] = _housing_links(destination, start_date, end_date)
+    if "excursions" in needs:
+        category_links["excursions"] = _excursion_links(destination)
+    if "road" in needs:
+        category_links["road"] = _road_links(destination)
+    if "car_rental" in needs:
+        category_links["car_rental"] = _car_rental_links(destination)
+    if "bike_rental" in needs:
+        category_links["bike_rental"] = _bike_rental_links(destination)
+    if "transfers" in needs:
+        category_links["transfers"] = _transfer_links(destination)
+
+    structured: dict[str, list[TravelSearchResult]] = {}
+    for category, items in category_links.items():
+        results = [
+            TravelSearchResult(
+                title=f"{CATEGORY_TITLES.get(category, category)}: {label}",
+                price_text="Откройте ссылку, чтобы увидеть актуальные варианты и цены.",
+                url=url,
+                source=label.replace("✈️ ", "").replace("🏨 ", "").replace("🏠 ", "").replace("🧳 ", "").replace("🎟 ", "").replace("🛰 ", "").replace("🎧 ", "").replace("🥾 ", "").replace("🚆 ", "").replace("🗺 ", "").replace("🚗 ", "").replace("🚘 ", "").replace("🏍 ", "").replace("🛵 ", "").replace("🚕 ", ""),
+                dates=dates_text or "",
+                note="Подобрано из обсуждения в чате.",
+            )
+            for label, url in items
+        ]
+        structured[category] = trim_results(results)
+    return structured
 
 
 def build_links_text(

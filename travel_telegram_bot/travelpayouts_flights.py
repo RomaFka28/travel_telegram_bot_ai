@@ -1,10 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+from travel_result_models import TravelSearchResult, trim_results
 from travel_planner import BUDGET_HINTS
 from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient
 from weather_service import _parse_dates_range
@@ -56,13 +57,57 @@ class TravelpayoutsFlightProvider:
     ) -> str:
         if not self.enabled:
             return ""
-        if not destination or destination == "не указано":
+        if not destination or destination == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
             return ""
-        if not origin or origin == "не указано":
+        if not origin or origin == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
             return (
-                "Билеты: чтобы показать цены через Travelpayouts, нужен город вылета.\n"
-                "Подсказка: напишите в чате что-то вроде «летим из Томска» или обновите поездку через /plan."
+                "\u0411\u0438\u043b\u0435\u0442\u044b: \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0446\u0435\u043d\u044b \u0447\u0435\u0440\u0435\u0437 Travelpayouts, \u043d\u0443\u0436\u0435\u043d \u0433\u043e\u0440\u043e\u0434 \u0432\u044b\u043b\u0435\u0442\u0430.\n"
+                "\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0430: \u043d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u0432 \u0447\u0430\u0442\u0435 \u0447\u0442\u043e-\u0442\u043e \u0432\u0440\u043e\u0434\u0435 \u00ab\u043b\u0435\u0442\u0438\u043c \u0438\u0437 \u0422\u043e\u043c\u0441\u043a\u0430\u00bb \u0438\u043b\u0438 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u043f\u043e\u0435\u0437\u0434\u043a\u0443 \u0447\u0435\u0440\u0435\u0437 /plan."
             )
+
+        results = self.search_results(
+            origin=origin,
+            destination=destination,
+            dates_text=dates_text,
+            budget_text=budget_text,
+            group_size=group_size,
+        )
+        if not results:
+            search_url = self._build_search_url(origin=origin, destination=destination, start_date=None, end_date=None)
+            return (
+                f"\u0411\u0438\u043b\u0435\u0442\u044b: Travelpayouts \u043f\u043e\u043a\u0430 \u043d\u0435 \u0432\u0435\u0440\u043d\u0443\u043b \u0441\u0432\u0435\u0436\u0438\u0445 \u0446\u0435\u043d \u043f\u043e \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044e {origin} -> {destination}.\n"
+                f"\u041f\u043e\u0438\u0441\u043a / \u043f\u043e\u043a\u0443\u043f\u043a\u0430: {search_url}"
+            )
+
+        lines = [f"Travelpayouts / Aviasales: \u0441\u0432\u0435\u0436\u0438\u0435 \u0446\u0435\u043d\u044b \u0434\u043b\u044f {origin} -> {destination}"]
+        for index, result in enumerate(results[:3], start=1):
+            parts = [result.price_text]
+            if result.dates:
+                parts.append(result.dates)
+            if result.note:
+                parts.append(result.note)
+            if result.budget_fit:
+                parts.append(result.budget_fit)
+            lines.append(f"{index}. {', '.join(parts)}".replace(",", " "))
+        lines.append(f"\u041f\u043e\u0438\u0441\u043a / \u043f\u043e\u043a\u0443\u043f\u043a\u0430: {results[0].url}")
+        lines.append("\u0426\u0435\u043d\u044b Travelpayouts \u043a\u044d\u0448\u0438\u0440\u0443\u044e\u0442\u0441\u044f Aviasales, \u043f\u043e\u044d\u0442\u043e\u043c\u0443 \u044d\u0442\u043e \u043b\u0443\u0447\u0448\u0438\u0439 \u0434\u043e\u0441\u0442\u0443\u043f\u043d\u044b\u0439 \u0431\u044b\u0441\u0442\u0440\u044b\u0439 \u043e\u0440\u0438\u0435\u043d\u0442\u0438\u0440 \u043d\u0430 \u0434\u0430\u0442\u044b \u0438\u0437 \u0447\u0430\u0442\u0430.")
+        return "\n".join(lines)
+
+    def search_results(
+        self,
+        *,
+        origin: str,
+        destination: str,
+        dates_text: str,
+        budget_text: str,
+        group_size: int,
+    ) -> list[TravelSearchResult]:
+        if not self.enabled:
+            return []
+        if not destination or destination == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
+            return []
+        if not origin or origin == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
+            return []
 
         try:
             origin_match = self._resolve_place(origin)
@@ -88,30 +133,35 @@ class TravelpayoutsFlightProvider:
                 end_date=date_range[1].isoformat() if date_range else None,
             )
         except TravelpayoutsError as exc:
-            return f"Билеты: не удалось получить данные Travelpayouts ({exc})."
+            return [
+                TravelSearchResult(
+                    title=f"\u0410\u0432\u0438\u0430\u0431\u0438\u043b\u0435\u0442\u044b {origin} -> {destination}",
+                    price_text="\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0446\u0435\u043d\u044b \u043f\u0440\u044f\u043c\u043e \u0441\u0435\u0439\u0447\u0430\u0441.",
+                    url=self._build_search_url(origin=origin, destination=destination, start_date=None, end_date=None),
+                    source="Travelpayouts / Aviasales",
+                    note=f"\u041e\u0448\u0438\u0431\u043a\u0430 \u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a\u0430: {exc}",
+                )
+            ]
 
-        if not offers:
-            return (
-                f"Билеты: Travelpayouts пока не вернул свежих цен по направлению {origin} -> {destination}.\n"
-                f"Поиск / покупка: {search_url}"
-            )
-
-        lines = [
-            f"Travelpayouts / Aviasales: свежие цены для {origin_match.name} -> {destination_match.name}",
-        ]
-        for index, offer in enumerate(offers[:3], start=1):
+        results: list[TravelSearchResult] = []
+        for offer in offers[:3]:
             budget_fit = self._budget_fit_text(offer.value, budget_text)
-            transfers = "прямой" if offer.number_of_changes == 0 else f"{offer.number_of_changes} перес."
+            transfers = "\u043f\u0440\u044f\u043c\u043e\u0439" if offer.number_of_changes == 0 else f"{offer.number_of_changes} \u043f\u0435\u0440\u0435\u0441."
             total = offer.value * max(1, group_size)
             score = self._score_offer(offer.value, offer.number_of_changes, budget_text)
-            lines.append(
-                f"{index}. {offer.value:,} ₽/чел. ({total:,} ₽ на {max(1, group_size)} чел.), "
-                f"{offer.depart_date} -> {offer.return_date or 'one-way'}, {transfers}, "
-                f"оценка {score}/10, {budget_fit}".replace(",", " ")
+            results.append(
+                TravelSearchResult(
+                    title=f"{origin_match.name} -> {destination_match.name}",
+                    price_text=f"{offer.value:,} \u20bd/\u0447\u0435\u043b. ({total:,} \u20bd \u043d\u0430 {max(1, group_size)} \u0447\u0435\u043b.)".replace(",", " "),
+                    url=search_url,
+                    source="Travelpayouts / Aviasales",
+                    score=score,
+                    budget_fit=budget_fit,
+                    dates=f"{offer.depart_date} -> {offer.return_date or 'one-way'}",
+                    note=f"{transfers}, \u043e\u0446\u0435\u043d\u043a\u0430 {score}/10",
+                )
             )
-        lines.append(f"Поиск / покупка: {search_url}")
-        lines.append("Цены Travelpayouts кэшируются Aviasales, поэтому это лучший доступный быстрый ориентир на даты из чата.")
-        return "\n".join(lines)
+        return trim_results(results)
 
     def _build_search_url(
         self,
@@ -151,7 +201,7 @@ class TravelpayoutsFlightProvider:
         url = "https://autocomplete.travelpayouts.com/places2?" + urllib.parse.urlencode(params)
         payload = self._get_json(url)
         if not isinstance(payload, list) or not payload:
-            raise TravelpayoutsError(f"не нашёл IATA-код для '{term}'")
+            raise TravelpayoutsError(f"\u043d\u0435 \u043d\u0430\u0448\u0451\u043b IATA-\u043a\u043e\u0434 \u0434\u043b\u044f '{term}'")
 
         for item in payload:
             place_type = str(item.get("type") or "")
@@ -165,7 +215,7 @@ class TravelpayoutsFlightProvider:
             name = str(item.get("name") or term).strip()
             if code:
                 return PlaceMatch(code=code, name=name, type=place_type or "airport")
-        raise TravelpayoutsError(f"не нашёл IATA-код для '{term}'")
+        raise TravelpayoutsError(f"\u043d\u0435 \u043d\u0430\u0448\u0451\u043b IATA-\u043a\u043e\u0434 \u0434\u043b\u044f '{term}'")
 
     def _search_prices_for_dates(
         self,
@@ -252,28 +302,28 @@ class TravelpayoutsFlightProvider:
         digits = [int(value) for value in "".join(ch if ch.isdigit() else " " for ch in lowered).split()]
         if digits:
             if digits[0] <= 40000:
-                return "эконом"
+                return "\u044d\u043a\u043e\u043d\u043e\u043c"
             if digits[0] >= 120000:
-                return "комфорт"
-        return "средний"
+                return "\u043a\u043e\u043c\u0444\u043e\u0440\u0442"
+        return "\u0441\u0440\u0435\u0434\u043d\u0438\u0439"
 
     @classmethod
     def _budget_fit_text(cls, price_per_person: int, budget_text: str) -> str:
         level = cls._normalize_budget_level(budget_text)
-        thresholds = {"эконом": 18000, "средний": 32000, "комфорт": 55000}
+        thresholds = {"\u044d\u043a\u043e\u043d\u043e\u043c": 18000, "\u0441\u0440\u0435\u0434\u043d\u0438\u0439": 32000, "\u043a\u043e\u043c\u0444\u043e\u0440\u0442": 55000}
         limit = thresholds[level]
         if price_per_person <= int(limit * 0.75):
-            return f"хорошо вписывается в {level} бюджет"
+            return f"\u0445\u043e\u0440\u043e\u0448\u043e \u0432\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0432 {level} \u0431\u044e\u0434\u0436\u0435\u0442"
         if price_per_person <= limit:
-            return f"вписывается в {level} бюджет"
+            return f"\u0432\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0432 {level} \u0431\u044e\u0434\u0436\u0435\u0442"
         if price_per_person <= int(limit * 1.25):
-            return f"на грани для {level} бюджета"
-        return f"дороже ожидаемого для {level} бюджета"
+            return f"\u043d\u0430 \u0433\u0440\u0430\u043d\u0438 \u0434\u043b\u044f {level} \u0431\u044e\u0434\u0436\u0435\u0442\u0430"
+        return f"\u0434\u043e\u0440\u043e\u0436\u0435 \u043e\u0436\u0438\u0434\u0430\u0435\u043c\u043e\u0433\u043e \u0434\u043b\u044f {level} \u0431\u044e\u0434\u0436\u0435\u0442\u0430"
 
     @classmethod
     def _score_offer(cls, price_per_person: int, changes: int, budget_text: str) -> int:
         level = cls._normalize_budget_level(budget_text)
-        thresholds = {"эконом": 18000, "средний": 32000, "комфорт": 55000}
+        thresholds = {"\u044d\u043a\u043e\u043d\u043e\u043c": 18000, "\u0441\u0440\u0435\u0434\u043d\u0438\u0439": 32000, "\u043a\u043e\u043c\u0444\u043e\u0440\u0442": 55000}
         limit = thresholds[level]
         score = 10
         if price_per_person > limit:
@@ -292,9 +342,9 @@ class TravelpayoutsFlightProvider:
         try:
             with urllib.request.urlopen(request, timeout=20) as response:
                 raw = response.read().decode("utf-8", errors="replace")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise TravelpayoutsError(str(exc)) from exc
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
-            raise TravelpayoutsError("пришёл невалидный JSON") from exc
+            raise TravelpayoutsError("\u043f\u0440\u0438\u0448\u0451\u043b \u043d\u0435\u0432\u0430\u043b\u0438\u0434\u043d\u044b\u0439 JSON") from exc

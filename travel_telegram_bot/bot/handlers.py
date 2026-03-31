@@ -28,6 +28,7 @@ from llm_travel_planner import LLMTravelPlanner
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from weather_service import WeatherError, fetch_weather_summary
+from travel_result_models import deserialize_needs
 
 logger = logging.getLogger(__name__)
 
@@ -933,6 +934,10 @@ class BotHandlers:
                     updates["budget_text"] = signal.budget_hint
                 if signal.interests:
                     updates["interests_text"] = ", ".join(signal.interests)
+                existing_needs = set(deserialize_needs(active_trip.get("detected_needs")))
+                if set(signal.detected_needs) - existing_needs:
+                    previous_prompt = (active_trip.get("source_prompt") or "").strip()
+                    updates["source_prompt"] = f"{previous_prompt}\n{signal.raw_text}".strip()[-3000:]
                 if updates:
                     self.db.update_trip_fields(int(active_trip["id"]), updates)
                     self.service._rebuild_trip(int(active_trip["id"]))

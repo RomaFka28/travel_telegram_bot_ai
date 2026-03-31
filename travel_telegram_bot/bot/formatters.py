@@ -5,6 +5,7 @@ import html
 from bot.keyboards import STATUS_LABELS
 from database import Database
 from housing_search import HousingSearchResponse
+from travel_result_models import deserialize_needs, deserialize_results
 
 
 class TripFormatter:
@@ -47,6 +48,49 @@ class TripFormatter:
     @staticmethod
     def _escape_block(text: str) -> str:
         return html.escape(text or "—")
+
+    @staticmethod
+    def _category_title(key: str) -> str:
+        return {
+            "flight_results": "Билеты",
+            "housing_results": "Жильё",
+            "activity_results": "Экскурсии",
+            "transport_results": "Дорога",
+            "rental_results": "Аренда",
+        }.get(key, key)
+
+    def _category_section(self, trip: dict, column: str) -> str:
+        results = deserialize_results(trip.get(column))
+        if not results:
+            return ""
+        lines = [f"<b>{self._category_title(column)}</b>"]
+        for result in results[:3]:
+            detail_parts = [html.escape(result.title)]
+            if result.price_text:
+                detail_parts.append(html.escape(result.price_text))
+            if result.budget_fit:
+                detail_parts.append(html.escape(result.budget_fit))
+            if result.note:
+                detail_parts.append(html.escape(result.note))
+            lines.append("• " + " — ".join(detail_parts))
+            lines.append(html.escape(result.url))
+        return "\n".join(lines)
+
+    def _detected_needs_line(self, trip: dict) -> str:
+        detected_needs = deserialize_needs(trip.get("detected_needs"))
+        if not detected_needs:
+            return ""
+        labels = {
+            "tickets": "билеты",
+            "housing": "жильё",
+            "excursions": "экскурсии",
+            "road": "дорога",
+            "car_rental": "аренда авто",
+            "bike_rental": "аренда байка",
+            "transfers": "трансферы",
+        }
+        rendered = ", ".join(labels.get(item, item) for item in detected_needs)
+        return f"\n🧩 По переписке вижу: <b>{html.escape(rendered)}</b>"
 
     def build_start_text(self) -> str:
         return (
@@ -151,19 +195,25 @@ class TripFormatter:
 
     def build_group_autodraft_reply(self, trip: dict) -> str:
         weather_text = (trip.get("weather_text") or "").strip()
-        tickets_text = (trip.get("tickets_text") or "").strip().splitlines()
-        links_text = (trip.get("links_text") or "").strip().splitlines()
-        useful_links = "\n".join(links_text[:5]) if links_text else "Ссылки пока не собраны."
-        tickets_preview = "\n".join(tickets_text[:2]) if tickets_text else ""
+        summary_short = (trip.get("summary_short_text") or "").strip()
+        sections = [
+            self._category_section(trip, "flight_results"),
+            self._category_section(trip, "housing_results"),
+            self._category_section(trip, "activity_results"),
+            self._category_section(trip, "transport_results"),
+            self._category_section(trip, "rental_results"),
+        ]
+        visible_sections = [section for section in sections if section]
         return (
             f"🧭 Собрал черновик поездки\n"
             f"Куда: <b>{html.escape(trip['destination'] or 'не указано')}</b>\n"
             f"Когда: <b>{html.escape(trip['dates_text'] or 'уточняется')}</b>\n"
             f"Людей: <b>{int(trip['group_size'] or 0)}</b>\n"
             f"Бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
-            + (f"\n\n<b>Билеты</b>\n{html.escape(tickets_preview)}" if tickets_preview else "")
+            + self._detected_needs_line(trip)
+            + (f"\n\n<b>Коротко</b>\n{html.escape(summary_short)}" if summary_short else "")
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
-            + f"\n\n<b>Где искать</b>\n{html.escape(useful_links)}"
+            + (f"\n\n{visible_sections[0]}" if visible_sections else "")
             + "\n\nОткройте /summary, если нужен полный план."
         )
 
@@ -217,10 +267,18 @@ class TripFormatter:
         notes_text = self._escape_block(trip["notes"] or "—")
         weather_text = (trip["weather_text"] or "").strip()
         weather_block = f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else ""
-        tickets_text = (trip.get("tickets_text") or "").strip()
-        tickets_block = f"\n\n<b>Билеты</b>\n{html.escape(tickets_text)}" if tickets_text else ""
+        sections = [
+            self._category_section(trip, "flight_results"),
+            self._category_section(trip, "housing_results"),
+            self._category_section(trip, "activity_results"),
+            self._category_section(trip, "transport_results"),
+            self._category_section(trip, "rental_results"),
+        ]
+        structured_block = "\n\n".join(section for section in sections if section)
         links_text = (trip.get("links_text") or "").strip()
-        links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text else ""
+        links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text and not structured_block else ""
+        summary_short = (trip.get("summary_short_text") or "").strip()
+        short_block = f"\n\n<b>Быстрый вывод</b>\n{html.escape(summary_short)}" if summary_short else ""
 
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
@@ -229,7 +287,11 @@ class TripFormatter:
             f"📅 Даты: <b>{html.escape(trip['dates_text'] or 'не указаны')}</b> · <b>{int(trip['days_count'] or 0)} дн.</b>\n"
             f"👥 Группа: <b>{int(trip['group_size'] or 0)} чел.</b>\n"
             f"💸 Целевой бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
-            f"🎯 Интересы: <b>{html.escape(trip['interests_text'] or 'не указаны')}</b>\n\n"
+            f"🎯 Интересы: <b>{html.escape(trip['interests_text'] or 'не указаны')}</b>"
+            + self._detected_needs_line(trip)
+            + "\n"
+            + short_block
+            + "\n\n"
             f"<b>Коротко о направлении</b>\n{context_preview}\n\n"
             f"<b>Маршрут</b>\n{itinerary_preview}\n\n"
             f"<b>Где жить</b>\n{stay_preview}\n\n"
@@ -241,7 +303,7 @@ class TripFormatter:
             + "\n".join(self._date_lines(trip_id))
             + "\n\n"
             + f"<b>Заметки / открытые вопросы</b>\n{notes_text}"
-            + tickets_block
+            + (f"\n\n{structured_block}" if structured_block else "")
             + links_block
             + weather_block
         )
