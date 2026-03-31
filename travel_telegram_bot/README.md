@@ -103,6 +103,7 @@ travel_telegram_bot/
    - `OPENROUTER_API_KEY` и `OPENROUTER_MODEL`, если нужен `/planai`
    - `OPENROUTER_WEB_SEARCH=true`, если хотите, чтобы LLM подтягивал более свежую travel-информацию через OpenRouter web search
    - `TRAVELPAYOUTS_API_KEY`, если хотите цены на билеты через Aviasales Data API
+   - `TRAVELPAYOUTS_MARKER` и `TRAVELPAYOUTS_TRS`, если хотите получать партнёрские ссылки через Travelpayouts partner links API
 3. Установите зависимости:
 
 ```bash
@@ -125,6 +126,7 @@ python app.py
 - `OPENROUTER_MODEL=stepfun/step-3.5-flash:free`, если нужен быстрый бесплатный LLM-режим
 - `OPENROUTER_WEB_SEARCH=true`, если нужен доступ модели к web search для более свежих travel-ответов
 - `TRAVELPAYOUTS_API_KEY`, если хотите подтягивать цены на билеты через Travelpayouts / Aviasales
+- `TRAVELPAYOUTS_MARKER` и `TRAVELPAYOUTS_TRS`, если хотите, чтобы ссылки на билеты конвертировались в partner links
 - `LOG_LEVEL`
 - `PLAYWRIGHT_ENABLED=true`, только если позже захотите включить браузерный слой для `/hotels`
 - `PLAYWRIGHT_TIMEOUT_MS`, опционально для Playwright-режима

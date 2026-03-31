@@ -32,6 +32,7 @@ from health_server import start_if_render
 from housing_search import build_housing_provider
 from llm_travel_planner import LLMPlannerSettings, LLMTravelPlanner
 from travelpayouts_flights import TravelpayoutsFlightProvider
+from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient, TravelpayoutsPartnerLinksConfig
 from travel_planner import TravelPlanner
 
 
@@ -78,7 +79,14 @@ def build_application():
     else:
         planner = TravelPlanner()
     formatter = TripFormatter(database)
-    flight_provider = TravelpayoutsFlightProvider(settings.travelpayouts_api_key)
+    partner_links = TravelpayoutsPartnerLinksClient(
+        TravelpayoutsPartnerLinksConfig(
+            api_key=settings.travelpayouts_api_key,
+            marker=settings.travelpayouts_marker,
+            trs=settings.travelpayouts_trs,
+        )
+    )
+    flight_provider = TravelpayoutsFlightProvider(settings.travelpayouts_api_key, partner_links)
     service = TripService(database, planner, flight_provider)
     housing_provider = build_housing_provider(
         playwright_enabled=settings.playwright_enabled,
