@@ -98,6 +98,46 @@ class TripFormatter:
         rendered = ", ".join(labels.get(item, item) for item in detected_needs)
         return f"\n🧩 По переписке вижу: <b>{html.escape(rendered)}</b>"
 
+    @staticmethod
+    def _has_housing_type_hint(trip: dict) -> bool:
+        combined = " ".join(
+            str(trip.get(field) or "")
+            for field in ("notes", "source_prompt", "interests_text")
+        ).lower()
+        return any(keyword in combined for keyword in ("отел", "квартир", "апарт", "дом", "студи", "хостел"))
+
+    def _planning_readiness(self, trip: dict, trip_id: int) -> tuple[str, str]:
+        detected_needs = set(deserialize_needs(trip.get("detected_needs")))
+        known_members = self._db.count_chat_members(int(trip["chat_id"])) if trip.get("chat_id") else 0
+        responded = len(self._db.list_participants(trip_id))
+        interests_text = normalized_search_value(trip.get("interests_text"))
+
+        checks: list[tuple[str, bool]] = [
+            ("направление", bool(normalized_search_value(trip.get("destination")))),
+            ("даты", bool(normalized_search_value(trip.get("dates_text")))),
+            ("размер группы", int(trip.get("group_size") or 0) > 0),
+            ("бюджет", bool(normalized_search_value(trip.get("budget_text")))),
+        ]
+        if "tickets" in detected_needs:
+            checks.append(("город вылета", bool(normalized_search_value(trip.get("origin")))))
+        if "housing" in detected_needs:
+            checks.append(("тип жилья", self._has_housing_type_hint(trip)))
+        if "excursions" in detected_needs:
+            checks.append(("формат экскурсий", bool(interests_text)))
+        if "road" in detected_needs:
+            checks.append(("день выезда", bool(normalized_search_value(trip.get("dates_text")))))
+        if known_members > 1:
+            checks.append(("ответы участников", responded > 0))
+
+        ready_count = sum(1 for _, is_ready in checks if is_ready)
+        total_count = max(1, len(checks))
+        status_lines = [f"Готовность плана: <b>{ready_count}/{total_count}</b>"]
+        checklist_lines = [
+            f"{'✅' if is_ready else '⏳'} {label}"
+            for label, is_ready in checks
+        ]
+        return "\n".join(status_lines), "\n".join(checklist_lines)
+
     def build_start_text(self) -> str:
         return (
             "Привет! Добавьте меня в чат поездки, включите авто-анализ в /settings и обсуждайте поездку обычными сообщениями.\n\n"
@@ -154,7 +194,11 @@ class TripFormatter:
             f"{active_trip_line}\n\n"
             f"• Напоминания: <b>{'включены' if reminders_enabled else 'выключены'}</b>\n"
             f"• Авто-черновики из сообщений: <b>{'включены' if autodraft_enabled else 'выключены'}</b>\n\n"
-            "Авто-черновики нужны, чтобы бот предлагал план, когда видит обсуждение поездки в группе. "
+            "Авто-черновики нужны, чтобы бот предлагал план, когда видит обсуждение поездки в группе.\n\n"
+            "<b>Как это работает</b>\n"
+            "• бот анализирует только те сообщения, которые увидел после добавления в группу и после включения авто-анализа\n"
+            "• старую историю чата задним числом Telegram боту не отдаёт\n"
+            "• для черновика бот смотрит на недавнее окно сообщений, а потом обновляет активную поездку по новым репликам\n\n"
             "Если хотите только ручной режим через команды, выключите этот флаг."
         )
 
@@ -211,6 +255,7 @@ class TripFormatter:
         destination = normalized_search_value(trip.get("destination")) or "не указано"
         dates_text = normalized_search_value(trip.get("dates_text")) or "уточняется"
         budget_text = normalized_search_value(trip.get("budget_text")) or "не указан"
+        readiness_text, checklist_text = self._planning_readiness(trip, int(trip["id"]))
         sections = [
             self._category_section(trip, "flight_results"),
             self._category_section(trip, "housing_results"),
@@ -227,6 +272,7 @@ class TripFormatter:
             f"Людей: <b>{int(trip['group_size'] or 0)}</b>\n"
             f"Бюджет: <b>{html.escape(budget_text)}</b>\n"
             + self._detected_needs_line(trip)
+            + f"\n\n{readiness_text}\n{html.escape(checklist_text)}"
             + (f"\n\n<b>Коротко</b>\n{html.escape(summary_short)}" if summary_short else "")
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
             + (f"\n\n{compact_sections}" if compact_sections else "")
@@ -309,6 +355,7 @@ class TripFormatter:
         short_block = f"\n\n<b>Быстрый вывод</b>\n{html.escape(summary_short)}" if summary_short else ""
         open_questions = (trip.get("open_questions_text") or "").strip()
         open_questions_block = f"\n\n<b>Открытые вопросы</b>\n{html.escape(open_questions)}" if open_questions else ""
+        readiness_text, checklist_text = self._planning_readiness(trip, trip_id)
 
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
@@ -320,6 +367,7 @@ class TripFormatter:
             f"🎯 Интересы: <b>{html.escape(interests_text)}</b>"
             + self._detected_needs_line(trip)
             + "\n"
+            + f"\n{readiness_text}\n{html.escape(checklist_text)}"
             + short_block
             + "\n\n"
             f"<b>Коротко о направлении</b>\n{context_preview}\n\n"

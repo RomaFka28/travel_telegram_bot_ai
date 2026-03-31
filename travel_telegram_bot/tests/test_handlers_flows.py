@@ -231,6 +231,7 @@ def test_settings_toggle_can_disable_group_autodraft(tmp_path) -> None:
     settings_update, settings_message = make_update(chat_id=909)
     asyncio.run(handlers.settings_command(settings_update, DummyContext()))
     assert "Авто-черновики" in settings_message.replies[0]["text"]
+    assert "старую историю чата задним числом" in settings_message.replies[0]["text"]
 
     callback_update, _, query = make_callback_update(data="settings:toggle_autodraft", chat_id=909)
     asyncio.run(handlers.settings_callback(callback_update, DummyContext()))
@@ -279,6 +280,7 @@ def test_group_autodraft_reply_shows_multiple_detected_categories(tmp_path) -> N
     assert "Жильё" in rendered
     assert "Экскурсии" in rendered
     assert "Дорога" in rendered
+    assert "Готовность плана" in rendered
 
 
 def test_hotels_command_returns_russian_housing_sources(tmp_path) -> None:
@@ -387,6 +389,7 @@ def test_summary_only_shows_detected_categories(tmp_path) -> None:
     assert "Жильё" in rendered
     assert "Экскурсии" in rendered
     assert "Открытые вопросы" in rendered
+    assert "Готовность плана" in rendered
 
 
 def test_summary_shows_full_multiday_itinerary(tmp_path) -> None:
