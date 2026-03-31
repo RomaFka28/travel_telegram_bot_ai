@@ -50,6 +50,8 @@ CHAT_SETTINGS_COLUMNS: dict[str, str] = {
     "reminders_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
     "autodraft_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
     "selected_trip_id": "BIGINT",
+    "language_code": "TEXT NOT NULL DEFAULT 'ru'",
+    "language_selected": "BOOLEAN NOT NULL DEFAULT FALSE",
 }
 
 EDITABLE_TRIP_FIELDS = {
@@ -190,10 +192,9 @@ class Database:
                 if column_name not in existing_columns:
                     conn.execute(f"ALTER TABLE trips ADD COLUMN {column_name} {definition}")
             chat_settings_columns = self._sqlite_table_columns(conn, "chat_settings")
-            if "selected_trip_id" not in chat_settings_columns:
-                conn.execute("ALTER TABLE chat_settings ADD COLUMN selected_trip_id INTEGER")
-            if "autodraft_enabled" not in chat_settings_columns:
-                conn.execute("ALTER TABLE chat_settings ADD COLUMN autodraft_enabled INTEGER NOT NULL DEFAULT 1")
+            for column_name, definition in CHAT_SETTINGS_COLUMNS.items():
+                if column_name not in chat_settings_columns:
+                    conn.execute(f"ALTER TABLE chat_settings ADD COLUMN {column_name} {definition}")
 
     def _init_postgres(self) -> None:
         with self._connect() as conn:
@@ -335,7 +336,7 @@ class Database:
                         (chat_id,),
                     )
                     cur.execute(
-                        "SELECT chat_id, reminders_enabled, autodraft_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
+                        "SELECT chat_id, reminders_enabled, autodraft_enabled, selected_trip_id, language_code, language_selected FROM chat_settings WHERE chat_id = %s",
                         (chat_id,),
                     )
                     row = cur.fetchone()
@@ -344,6 +345,8 @@ class Database:
                         "reminders_enabled": True,
                         "autodraft_enabled": True,
                         "selected_trip_id": None,
+                        "language_code": "ru",
+                        "language_selected": False,
                     }
 
         with self._connect() as conn:
@@ -360,6 +363,8 @@ class Database:
                 "reminders_enabled": 1,
                 "autodraft_enabled": 1,
                 "selected_trip_id": None,
+                "language_code": "ru",
+                "language_selected": 0,
             }
 
     def toggle_reminders(self, chat_id: int) -> dict[str, Any]:
@@ -380,7 +385,7 @@ class Database:
                         (new_value, chat_id),
                     )
                     cur.execute(
-                        "SELECT chat_id, reminders_enabled, autodraft_enabled, selected_trip_id FROM chat_settings WHERE chat_id = %s",
+                        "SELECT chat_id, reminders_enabled, autodraft_enabled, selected_trip_id, language_code, language_selected FROM chat_settings WHERE chat_id = %s",
                         (chat_id,),
                     )
                     row = cur.fetchone()
@@ -422,6 +427,39 @@ class Database:
                 "UPDATE chat_settings SET selected_trip_id = ? WHERE chat_id = ?",
                 (trip_id, chat_id),
             )
+
+    def set_chat_language(self, chat_id: int, language_code: str) -> dict[str, Any]:
+        self.get_or_create_settings(chat_id)
+        normalized = "en" if (language_code or "").lower() == "en" else "ru"
+
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE chat_settings SET language_code = %s, language_selected = %s WHERE chat_id = %s",
+                        (normalized, True, chat_id),
+                    )
+                    cur.execute(
+                        "SELECT chat_id, reminders_enabled, autodraft_enabled, selected_trip_id, language_code, language_selected FROM chat_settings WHERE chat_id = %s",
+                        (chat_id,),
+                    )
+                    row = cur.fetchone()
+                    return self._row_to_dict(row) or {}
+
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE chat_settings SET language_code = ?, language_selected = ? WHERE chat_id = ?",
+                (normalized, 1, chat_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM chat_settings WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()
+            return self._row_to_dict(row) or {}
+
+    def get_chat_language(self, chat_id: int) -> str:
+        settings = self.get_or_create_settings(chat_id)
+        return "en" if settings.get("language_code") == "en" else "ru"
 
     def get_selected_trip(self, chat_id: int) -> dict[str, Any] | None:
         settings = self.get_or_create_settings(chat_id)

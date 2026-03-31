@@ -162,6 +162,7 @@ def build_application():
     app.add_handler(CallbackQueryHandler(handlers.trip_action_callback, pattern=r"^tripaction:"))
     app.add_handler(CallbackQueryHandler(handlers.date_vote_callback, pattern=r"^datevote:"))
     app.add_handler(CallbackQueryHandler(handlers.settings_callback, pattern=r"^settings:"))
+    app.add_handler(CallbackQueryHandler(handlers.language_callback, pattern=r"^language:"))
     app.add_error_handler(handlers.error_handler)
     return app
 

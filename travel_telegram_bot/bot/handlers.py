@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import html
 import logging
@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from bot.formatters import TripFormatter
 from bot.keyboards import (
     date_vote_keyboard,
+    language_keyboard,
     participant_status_keyboard,
     settings_keyboard,
     trip_delete_confirm_keyboard,
@@ -27,6 +28,7 @@ from bot.keyboards import (
 from bot.trip_service import TripService
 from database import Database
 from housing_search import HousingSearchProvider
+from i18n import tr
 from llm_travel_planner import LLMTravelPlanner
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
@@ -94,14 +96,20 @@ class BotHandlers:
             "going": "going",
             "еду": "going",
             "да": "going",
+            "yes": "going",
             "interested": "interested",
             "интересно": "interested",
             "думаю": "interested",
+            "thinking": "interested",
+            "maybe": "interested",
             "not_going": "not_going",
+            "notgoing": "not_going",
+            "not going": "not_going",
             "нееду": "not_going",
             "не_еду": "not_going",
             "не-еду": "not_going",
             "нет": "not_going",
+            "no": "not_going",
         }
         compact = normalized.replace(" ", "")
         return mapping.get(normalized) or mapping.get(compact)
@@ -132,25 +140,14 @@ class BotHandlers:
             full_name=self._display_name(update),
         )
 
+    def _chat_language(self, chat_id: int | None) -> str:
+        if chat_id is None:
+            return "ru"
+        return self.db.get_chat_language(chat_id)
+
     @staticmethod
-    def _build_plan_prompt_text() -> str:
-        return (
-            "Отправьте следующим сообщением свободное описание поездки.\n\n"
-            "Лучше сразу указать:\n"
-            "• куда хотите поехать\n"
-            "• сколько человек едет\n"
-            "• откуда вылет / выезд\n"
-            "• даты туда и обратно или примерный диапазон\n"
-            "• бюджет\n"
-            "• что вам интересно\n"
-            "• если билет нужен только туда, напишите: «в одну сторону» или «без обратного билета»\n\n"
-            "Пример:\n"
-            "Хочу поехать с друзьями во Владивосток на 5 дней. Нас 4, вылет из Новосибирска, "
-            "туда 12 июня, обратно 16 июня, бюджет Эконом, любим море и еду.\n\n"
-            "Пример в одну сторону:\n"
-            "Хочу в Стамбул один, вылет из Тбилиси 12 июня, билет в одну сторону, бюджет Бизнес, "
-            "интересуют прогулки и еда."
-        )
+    def _build_plan_prompt_text(language_code: str = "ru") -> str:
+        return tr(language_code, "plan_prompt")
 
     async def _create_trip_from_text(self, update: Update, raw_text: str) -> bool:
         message = update.effective_message
@@ -158,14 +155,17 @@ class BotHandlers:
             return False
         text = (raw_text or "").strip()
         if not text:
-            await message.reply_text("Нужен текст поездки. После /plan отправьте описание следующим сообщением.")
+            await message.reply_text("Need trip text. After /plan, send the description in the next message." if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en" else "Нужен текст поездки. После /plan отправьте описание следующим сообщением.")
             return False
 
         try:
-            request = self.planner.parse_trip_request(text)
+            request = self.planner.parse_trip_request(
+                text,
+                language_code=self._chat_language(update.effective_chat.id if update.effective_chat else None),
+            )
         except ValueError as exc:
             await message.reply_text(str(exc))
-            await message.reply_text(self._build_plan_prompt_text())
+            await message.reply_text(self._build_plan_prompt_text(self._chat_language(update.effective_chat.id if update.effective_chat else None)))
             return False
 
         request.notes = ""
@@ -185,12 +185,13 @@ class BotHandlers:
             self.formatter.build_trip_created_text(
                 replaced_trip=replaced_trip,
                 chat_type=getattr(chat, "type", None),
+                language_code=self._chat_language(chat.id),
             )
         )
         await message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
             disable_web_page_preview=True,
         )
         return True
@@ -252,9 +253,7 @@ class BotHandlers:
         if trip:
             self.db.set_selected_trip(chat.id, int(trip["id"]))
         if not trip and update.effective_message:
-            await update.effective_message.reply_text(
-                "Пока нет активной поездки. Запустите /plan и отправьте описание следующим сообщением или создайте её пошагово через /newtrip."
-            )
+            await update.effective_message.reply_text(tr(self._chat_language(chat.id), "active_trip_missing"))
         return trip
 
     def _request_from_trip_row(self, trip) -> dict[str, str | int]:
@@ -351,6 +350,7 @@ class BotHandlers:
             interests_text=interests_text,
             notes=str(current["notes"]),
             source_prompt=source_prompt,
+            language_code=self._chat_language(int(trip.get("chat_id") or 0)),
         )
     def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
         notes = request.notes if notes_override is None else notes_override
@@ -476,21 +476,35 @@ class BotHandlers:
         trip = self.db.get_trip_by_id(trip_id)
         if not trip:
             return
-        request = self.planner.build_request_from_fields(**self._request_from_trip_row(trip))
+        request = self.planner.build_request_from_fields(
+            **self._request_from_trip_row(trip),
+            language_code=self._chat_language(int(trip["chat_id"])),
+        )
         plan = self.planner.generate_plan(request)
         self.db.update_trip_fields(trip_id, self._build_trip_payload(request, plan, notes_override=trip["notes"] or ""))
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
-        if not message:
+        chat = update.effective_chat
+        if not message or not chat:
             return
         self._remember_chat_member(update)
-        await message.reply_text(self.formatter.build_start_text())
+        settings = self.db.get_or_create_settings(chat.id)
+        if not bool(settings.get("language_selected")):
+            await message.reply_text(
+                tr("ru", "language_prompt") + "\n\n" + tr("en", "language_prompt"),
+                reply_markup=language_keyboard(settings.get("language_code")),
+            )
+            return
+        language_code = self._chat_language(chat.id)
+        await message.reply_text(self.formatter.build_start_text_for_language(language_code))
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
+        chat = update.effective_chat
+        lang = self._chat_language(chat.id if chat else None)
         await update.effective_message.reply_text(
-            self.formatter.build_help_text(),
+            self.formatter.build_help_text(lang),
             parse_mode=ParseMode.HTML,
         )
 
@@ -499,14 +513,15 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
+        lang = self._chat_language(int(trip["chat_id"]))
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         if not self.flight_provider or not self.flight_provider.enabled:
             await update.effective_message.reply_text(
-                "Travelpayouts пока не подключён. Добавьте TRAVELPAYOUTS_API_KEY в Render, и я смогу подтягивать цены на билеты."
+                "Travelpayouts is not connected yet. Add TRAVELPAYOUTS_API_KEY in Render and I will be able to fetch ticket prices." if lang == "en" else "Travelpayouts пока не подключён. Добавьте TRAVELPAYOUTS_API_KEY в Render, и я смогу подтягивать цены на билеты."
             )
             return
 
-        await update.effective_message.reply_text("Смотрю свежие цены на билеты через Travelpayouts...")
+        await update.effective_message.reply_text("Checking fresh ticket prices via Travelpayouts..." if lang == "en" else "Смотрю свежие цены на билеты через Travelpayouts...")
         tickets_text = self.flight_provider.build_ticket_snapshot(
             origin=trip["origin"] or "не указано",
             destination=trip["destination"] or "",
@@ -524,7 +539,8 @@ class BotHandlers:
         message = update.effective_message
         if not trip or not message:
             return
-        await message.reply_text("Ищу варианты и русские сценарии по жилью. Это может занять несколько секунд.")
+        lang = self._chat_language(int(trip["chat_id"]))
+        await message.reply_text("Looking for housing options. This may take a few seconds." if lang == "en" else "Ищу варианты и русские сценарии по жилью. Это может занять несколько секунд.")
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         response = await self.housing_provider.search(
             destination=trip["destination"] or "",
@@ -546,7 +562,7 @@ class BotHandlers:
         await update.effective_message.reply_text(
             self.formatter.build_trip_list_text(chat.id),
             parse_mode=ParseMode.HTML,
-            reply_markup=trips_list_keyboard(trips) if trips else None,
+            reply_markup=trips_list_keyboard(trips, self._chat_language(chat.id)) if trips else None,
         )
 
     async def select_trip_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -576,15 +592,17 @@ class BotHandlers:
         await message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
             disable_web_page_preview=True,
         )
 
     async def plan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
+        chat = update.effective_chat
+        lang = self._chat_language(chat.id if chat else None)
         if not context.args:
             context.chat_data["pending_plan_prompt"] = True
-            await update.effective_message.reply_text(self._build_plan_prompt_text())
+            await update.effective_message.reply_text(self._build_plan_prompt_text(lang))
             return
 
         raw_text = " ".join(context.args).strip()
@@ -601,7 +619,10 @@ class BotHandlers:
 
         raw_text = " ".join(context.args).strip()
         try:
-            request = self.planner.parse_trip_request(raw_text)
+            request = self.planner.parse_trip_request(
+                raw_text,
+                language_code=self._chat_language(update.effective_chat.id if update.effective_chat else None),
+            )
         except ValueError as exc:
             await update.effective_message.reply_text(str(exc))
             return
@@ -640,20 +661,22 @@ class BotHandlers:
             self.formatter.build_trip_created_text(
                 replaced_trip=replaced_trip,
                 chat_type=getattr(update.effective_chat, "type", None),
+                language_code=self._chat_language(chat.id),
             )
         )
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
             disable_web_page_preview=True,
         )
 
     async def new_trip_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data["trip_draft"] = {}
         self._remember_chat_member(update)
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
         await update.effective_message.reply_text(
-            "Как назвать поездку? Можно отправить '-' и я сгенерирую название автоматически.",
+            "What should I call this trip? You can send '-' and I will generate the title automatically." if lang == "en" else "Как назвать поездку? Можно отправить '-' и я сгенерирую название автоматически.",
             reply_markup=ReplyKeyboardRemove(),
         )
         return NEW_TRIP_TITLE
@@ -661,24 +684,27 @@ class BotHandlers:
     async def new_trip_title(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         title = (update.effective_message.text or "").strip()
         context.user_data.setdefault("trip_draft", {})["title"] = "" if title == "-" else title
-        await update.effective_message.reply_text("Куда планируете ехать?")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        await update.effective_message.reply_text("Where do you plan to go?" if lang == "en" else "Куда планируете ехать?")
         return NEW_TRIP_DESTINATION
 
     async def new_trip_destination(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["destination"] = (update.effective_message.text or "").strip()
-        await update.effective_message.reply_text("Откуда стартуете? Если пока не знаете — отправьте '-'.")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        await update.effective_message.reply_text("Where are you starting from? If you do not know yet, send '-'." if lang == "en" else "Откуда стартуете? Если пока не знаете — отправьте '-'.")
         await update.effective_message.reply_text(
-            "Можно пропустить этот шаг кнопкой ниже.",
+            "You can skip this step with the button below." if lang == "en" else "Можно пропустить этот шаг кнопкой ниже.",
             reply_markup=trip_skip_keyboard(),
         )
         return NEW_TRIP_ORIGIN
 
     async def new_trip_origin(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         origin = (update.effective_message.text or "").strip()
-        context.user_data.setdefault("trip_draft", {})["origin"] = "не указано" if origin == "-" else origin
-        await update.effective_message.reply_text("На сколько дней поездка?")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        context.user_data.setdefault("trip_draft", {})["origin"] = ("not specified" if lang == "en" else "не указано") if origin == "-" else origin
+        await update.effective_message.reply_text("How many days is the trip?" if lang == "en" else "На сколько дней поездка?")
         await update.effective_message.reply_text(
-            "Выберите длительность кнопкой или введите своё число.",
+            "Choose duration with the buttons or type your own number." if lang == "en" else "Выберите длительность кнопкой или введите своё число.",
             reply_markup=trip_days_keyboard(),
         )
         return NEW_TRIP_DAYS
@@ -688,21 +714,23 @@ class BotHandlers:
         try:
             days_count = max(1, min(int(raw_value), 14))
         except ValueError:
-            await update.effective_message.reply_text("Нужно число от 1 до 14. Например: 5")
+            await update.effective_message.reply_text("Please enter a number from 1 to 14. For example: 5" if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en" else "Нужно число от 1 до 14. Например: 5")
             return NEW_TRIP_DAYS
         context.user_data.setdefault("trip_draft", {})["days_count"] = days_count
-        await update.effective_message.reply_text("Какие ориентировочные даты или сезон? Например: 12–16 июня, майские, август.")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        await update.effective_message.reply_text("What approximate dates or season are you thinking about? For example: June 12-16, spring holidays, August." if lang == "en" else "Какие ориентировочные даты или сезон? Например: 12–16 июня, майские, август.")
         await update.effective_message.reply_text(
-            "Даты можно написать свободно.",
+            "You can write dates in free form." if lang == "en" else "Даты можно написать свободно.",
             reply_markup=ReplyKeyboardRemove(),
         )
         return NEW_TRIP_DATES
 
     async def new_trip_dates(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["dates_text"] = (update.effective_message.text or "").strip()
-        await update.effective_message.reply_text("Сколько человек планируете? Если пока прикидка — всё равно напишите число.")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        await update.effective_message.reply_text("How many people are you planning for? Even an estimate is fine." if lang == "en" else "Сколько человек планируете? Если пока прикидка — всё равно напишите число.")
         await update.effective_message.reply_text(
-            "Выберите размер группы кнопкой или введите своё число.",
+            "Choose the group size with the buttons or type your own number." if lang == "en" else "Выберите размер группы кнопкой или введите своё число.",
             reply_markup=trip_group_size_keyboard(),
         )
         return NEW_TRIP_GROUP_SIZE
@@ -712,30 +740,33 @@ class BotHandlers:
         try:
             group_size = max(1, min(int(raw_value), 20))
         except ValueError:
-            await update.effective_message.reply_text("Нужно число от 1 до 20. Например: 4")
+            await update.effective_message.reply_text("Please enter a number from 1 to 20. For example: 4" if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en" else "Нужно число от 1 до 20. Например: 4")
             return NEW_TRIP_GROUP_SIZE
         context.user_data.setdefault("trip_draft", {})["group_size"] = group_size
-        await update.effective_message.reply_text("Какой бюджет? Например: Эконом, Бизнес, Первый класс, до 80 000 или на 50 000.")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        await update.effective_message.reply_text("What budget do you have in mind? For example: Economy, Business, First Class, up to 80 000, or around 50 000." if lang == "en" else "Какой бюджет? Например: Эконом, Бизнес, Первый класс, до 80 000 или на 50 000.")
         await update.effective_message.reply_text(
-            "Можно выбрать готовый вариант кнопкой.",
-            reply_markup=trip_budget_keyboard(),
+            "You can use the quick buttons." if lang == "en" else "Можно выбрать готовый вариант кнопкой.",
+            reply_markup=trip_budget_keyboard(lang),
         )
         return NEW_TRIP_BUDGET
 
     async def new_trip_budget(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["budget_text"] = (update.effective_message.text or "").strip()
-        await update.effective_message.reply_text("Что важно в поездке? Напиши интересы через запятую: еда, природа, история, море, спокойный темп.")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        await update.effective_message.reply_text("What matters most in this trip? Write interests separated by commas: food, nature, history, sea, slow pace." if lang == "en" else "Что важно в поездке? Напиши интересы через запятую: еда, природа, история, море, спокойный темп.")
         await update.effective_message.reply_text(
-            "Здесь лучше написать текстом: например 'море, еда, спокойный темп'.",
+            "Free text works best here, for example: 'sea, food, slow pace'." if lang == "en" else "Здесь лучше написать текстом: например 'море, еда, спокойный темп'.",
             reply_markup=ReplyKeyboardRemove(),
         )
         return NEW_TRIP_INTERESTS
 
     async def new_trip_interests(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data.setdefault("trip_draft", {})["interests_text"] = (update.effective_message.text or "").strip()
-        await update.effective_message.reply_text("Есть заметки или открытые вопросы? Если нет — отправьте '-'.")
+        lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        await update.effective_message.reply_text("Any notes or open questions? If not, send '-'." if lang == "en" else "Есть заметки или открытые вопросы? Если нет — отправьте '-'.")
         await update.effective_message.reply_text(
-            "Если заметок нет, нажмите кнопку ниже.",
+            "If you have no notes, use the button below." if lang == "en" else "Если заметок нет, нажмите кнопку ниже.",
             reply_markup=trip_skip_keyboard(),
         )
         return NEW_TRIP_NOTES
@@ -758,6 +789,7 @@ class BotHandlers:
                 interests_text=draft.get("interests_text", "город, еда"),
                 notes=notes,
                 source_prompt=f"Новый бриф: {draft.get('destination', '')}, {draft.get('days_count', 3)} дн.",
+                language_code=lang,
             )
         except ValueError as exc:
             await update.effective_message.reply_text(str(exc))
@@ -781,12 +813,13 @@ class BotHandlers:
             self.formatter.build_trip_created_text(
                 replaced_trip=replaced_trip,
                 chat_type=getattr(update.effective_chat, "type", None),
+                language_code=self._chat_language(chat.id),
             )
         )
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
             disable_web_page_preview=True,
         )
         await update.effective_message.reply_text(
@@ -813,7 +846,7 @@ class BotHandlers:
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(int(trip["id"])),
             parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(int(trip["id"])),
+            reply_markup=trip_summary_keyboard(int(trip["id"]), self._chat_language(int(trip["chat_id"]))),
             disable_web_page_preview=True,
         )
 
@@ -893,19 +926,21 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
+        lang = self._chat_language(int(trip["chat_id"]))
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         normalized_status = self._normalize_status(" ".join(context.args)) if context.args else None
         if normalized_status:
             self._set_participant_status(int(trip["id"]), update, normalized_status)
-            await update.effective_message.reply_text(self.formatter.build_status_updated_text(normalized_status))
+            await update.effective_message.reply_text(self.formatter.build_status_updated_text(normalized_status, lang))
             await update.effective_message.reply_text(
                 self.formatter.build_participants_text(int(trip["id"])),
                 parse_mode=ParseMode.HTML,
             )
             return
         await update.effective_message.reply_text(
-            self.formatter.build_status_options_text(),
-            reply_markup=participant_status_keyboard(int(trip["id"])),
+            self.formatter.build_status_options_text(int(trip["id"])),
+            parse_mode=ParseMode.HTML,
+            reply_markup=participant_status_keyboard(int(trip["id"]), lang),
         )
 
     async def handle_trip_edit_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -955,7 +990,7 @@ class BotHandlers:
         await message.reply_text(
             self.formatter._build_summary_html(int(trip_id)),
             parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(int(trip_id)),
+            reply_markup=trip_summary_keyboard(int(trip_id), self._chat_language(int(trip["chat_id"]))),
             disable_web_page_preview=True,
         )
         self._log_trip_action(
@@ -1004,11 +1039,16 @@ class BotHandlers:
         if not signal.destination:
             if signal.destination_votes and self._should_send_group_reply(context, "last_destination_vote_reply", cooldown_seconds=600):
                 await message.reply_text(
-                    self.formatter.build_group_destination_vote_text(signal.destination_votes),
+                    self.formatter.build_group_destination_vote_text(
+                        signal.destination_votes,
+                        self._chat_language(chat.id),
+                    ),
                     parse_mode=ParseMode.HTML,
                 )
             elif self._should_send_group_reply(context, "last_clarify_reply", cooldown_seconds=600):
-                await message.reply_text(self.formatter.build_group_clarifying_question())
+                await message.reply_text(
+                    self.formatter.build_group_clarifying_question(self._chat_language(chat.id))
+                )
             return
 
         if active_trip:
@@ -1104,7 +1144,7 @@ class BotHandlers:
                         await query.message.reply_text(
                             self.formatter._build_summary_html(trip_id),
                             parse_mode=ParseMode.HTML,
-                            reply_markup=trip_summary_keyboard(trip_id),
+                            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
                             disable_web_page_preview=True,
                         )
                     await query.answer("Поездка открыта.")
@@ -1115,7 +1155,7 @@ class BotHandlers:
                         await query.edit_message_text(
                             text=self.formatter.build_trip_delete_confirm_text(trip),
                             parse_mode=ParseMode.HTML,
-                            reply_markup=trip_delete_confirm_keyboard(trip_id),
+                            reply_markup=trip_delete_confirm_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
                         )
                     await query.answer("Нужно подтверждение.")
                     return
@@ -1126,7 +1166,7 @@ class BotHandlers:
                             await query.edit_message_text(
                                 text=self.formatter._build_summary_html(trip_id),
                                 parse_mode=ParseMode.HTML,
-                                reply_markup=trip_summary_keyboard(trip_id),
+                                reply_markup=trip_summary_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
                                 disable_web_page_preview=True,
                             )
                         else:
@@ -1149,14 +1189,14 @@ class BotHandlers:
                             await query.message.reply_text(
                                 self.formatter._build_summary_html(next_trip_id),
                                 parse_mode=ParseMode.HTML,
-                                reply_markup=trip_summary_keyboard(next_trip_id),
+                                reply_markup=trip_summary_keyboard(next_trip_id, self._chat_language(chat_id)),
                                 disable_web_page_preview=True,
                             )
                         elif remaining_trips:
                             await query.edit_message_text(
                                 self.formatter.build_trip_list_text(chat_id),
                                 parse_mode=ParseMode.HTML,
-                                reply_markup=trips_list_keyboard(remaining_trips),
+                                reply_markup=trips_list_keyboard(remaining_trips, self._chat_language(chat_id)),
                             )
                         else:
                             await query.edit_message_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
@@ -1169,12 +1209,12 @@ class BotHandlers:
 
             if action in {"going", "interested", "not_going"}:
                 self._set_participant_status(trip_id, update, action)
-                await query.answer(self.formatter.build_status_updated_text(action))
+                await query.answer(self.formatter.build_status_updated_text(action, self._chat_language(int(trip["chat_id"]))))
                 if query.message:
                     await query.edit_message_text(
                         text=self.formatter._build_summary_html(trip_id),
                         parse_mode=ParseMode.HTML,
-                        reply_markup=trip_summary_keyboard(trip_id),
+                        reply_markup=trip_summary_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
                         disable_web_page_preview=True,
                     )
                 self._log_trip_action(
@@ -1353,10 +1393,11 @@ class BotHandlers:
         settings = self.db.get_or_create_settings(chat.id)
         reminders_enabled = self._bool_from_db(settings["reminders_enabled"])
         autodraft_enabled = self._bool_from_db(settings["autodraft_enabled"])
+        lang = self._chat_language(chat.id)
         await update.effective_message.reply_text(
             self.formatter.build_settings_text(chat.id),
             parse_mode=ParseMode.HTML,
-            reply_markup=settings_keyboard(reminders_enabled, autodraft_enabled),
+            reply_markup=settings_keyboard(reminders_enabled, autodraft_enabled, lang),
         )
 
     async def settings_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1370,16 +1411,56 @@ class BotHandlers:
             settings = self.db.toggle_reminders(chat.id)
         elif query.data == "settings:toggle_autodraft":
             settings = self.db.toggle_autodraft(chat.id)
+        elif query.data == "settings:show_language":
+            settings = self.db.get_or_create_settings(chat.id)
+            lang = self._chat_language(chat.id)
+            await query.edit_message_text(
+                text=tr(lang, "language_prompt"),
+                reply_markup=language_keyboard(settings.get("language_code")),
+            )
+            return
         else:
-            await query.answer("Неизвестное действие", show_alert=True)
+            await query.answer(tr(self._chat_language(chat.id), "settings_toggle_unknown"), show_alert=True)
             return
         reminders_enabled = self._bool_from_db(settings["reminders_enabled"])
         autodraft_enabled = self._bool_from_db(settings["autodraft_enabled"])
+        lang = self._chat_language(chat.id)
         await query.edit_message_text(
             text=self.formatter.build_settings_text(chat.id),
             parse_mode=ParseMode.HTML,
-            reply_markup=settings_keyboard(reminders_enabled, autodraft_enabled),
+            reply_markup=settings_keyboard(reminders_enabled, autodraft_enabled, lang),
         )
+
+    async def language_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        query = update.callback_query
+        chat = update.effective_chat
+        if not query or not chat:
+            return
+        parts = (query.data or "").split(":")
+        if len(parts) != 3 or parts[0] != "language" or parts[1] != "set":
+            await query.answer(tr("ru", "language_unknown_action"), show_alert=True)
+            return
+        language_code = "en" if parts[2] == "en" else "ru"
+        previous_settings = self.db.get_or_create_settings(chat.id)
+        self.db.set_chat_language(chat.id, language_code)
+        await query.answer(tr(language_code, "language_saved"))
+        if query.message:
+            if bool(previous_settings.get("language_selected")):
+                settings = self.db.get_or_create_settings(chat.id)
+                await query.edit_message_text(
+                    text=self.formatter.build_settings_text(chat.id),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=settings_keyboard(
+                        self._bool_from_db(settings["reminders_enabled"]),
+                        self._bool_from_db(settings["autodraft_enabled"]),
+                        language_code,
+                    ),
+                )
+            else:
+                await query.edit_message_text(
+                    text=self.formatter.build_start_text_for_language(language_code),
+                    parse_mode=ParseMode.HTML if "<b>" in self.formatter.build_start_text_for_language(language_code) else None,
+                )
 
     async def archive_trip_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         chat = update.effective_chat
@@ -1418,7 +1499,7 @@ class BotHandlers:
                 await message.reply_text(
                     self.formatter._build_summary_html(next_trip_id),
                     parse_mode=ParseMode.HTML,
-                    reply_markup=trip_summary_keyboard(next_trip_id),
+                    reply_markup=trip_summary_keyboard(next_trip_id, self._chat_language(chat.id)),
                     disable_web_page_preview=True,
                 )
             else:

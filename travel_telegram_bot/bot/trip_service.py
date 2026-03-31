@@ -170,6 +170,7 @@ class TripService:
             interests_text=request.interests_text,
             notes=notes,
             source_prompt=request.source_prompt,
+            language_code=getattr(request, "language_code", "ru"),
         )
         detected_needs, structured_results, tickets_text, links_text = self._collect_structured_results(effective_request)
         entry_requirements_text = build_entry_requirements_text(effective_request.destination, effective_request.origin)
@@ -227,13 +228,17 @@ class TripService:
             interests_text=interests_text,
             notes=str(current["notes"]),
             source_prompt=source_prompt,
+            language_code=self._db.get_chat_language(int(trip["chat_id"])),
         )
 
     def _rebuild_trip(self, trip_id: int) -> None:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
             return
-        request = self._planner.build_request_from_fields(**self._request_from_trip_row(trip))
+        request = self._planner.build_request_from_fields(
+            **self._request_from_trip_row(trip),
+            language_code=self._db.get_chat_language(int(trip["chat_id"])),
+        )
         plan = self._planner.generate_plan(request)
         self._db.update_trip_fields(trip_id, self._build_trip_payload(request, plan, notes_override=trip["notes"] or ""))
 
@@ -276,6 +281,7 @@ class TripService:
             interests_text=interests_text,
             notes=signal.raw_text,
             source_prompt=signal.raw_text,
+            language_code=self._db.get_chat_language(chat_id),
         )
         plan = self._planner.generate_plan(request)
         payload = self._build_trip_payload(request, plan)

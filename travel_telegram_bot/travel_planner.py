@@ -43,6 +43,7 @@ class TripRequest:
     interests: list[str]
     notes: str
     source_prompt: str
+    language_code: str = "ru"
 
     @property
     def interests_text(self) -> str:
@@ -498,7 +499,7 @@ DEFAULT_PROFILE = DestinationProfile(
 
 
 class TravelPlanner:
-    def parse_trip_request(self, text: str, *, fallback_title: str | None = None) -> TripRequest:
+    def parse_trip_request(self, text: str, *, fallback_title: str | None = None, language_code: str = "ru") -> TripRequest:
         cleaned = self._normalize_spaces(text)
         destination = self._extract_destination(cleaned)
         if not destination:
@@ -526,6 +527,7 @@ class TravelPlanner:
             interests=interests,
             notes=cleaned,
             source_prompt=cleaned,
+            language_code="en" if language_code == "en" else "ru",
         )
 
     def build_request_from_fields(
@@ -541,6 +543,7 @@ class TravelPlanner:
         interests_text: str,
         notes: str,
         source_prompt: str = "",
+        language_code: str = "ru",
     ) -> TripRequest:
         destination_clean = normalized_search_value(destination) or ""
         if not destination_clean:
@@ -558,6 +561,7 @@ class TravelPlanner:
             interests=interests,
             notes=(notes or "").strip(),
             source_prompt=(source_prompt or notes or f"Поездка в {destination_clean}").strip(),
+            language_code="en" if language_code == "en" else "ru",
         )
 
     def generate_plan_heuristic(self, request: TripRequest) -> TripPlan:

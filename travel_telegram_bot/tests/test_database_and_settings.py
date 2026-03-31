@@ -75,12 +75,25 @@ def test_chat_settings_include_autodraft_toggle(tmp_path) -> None:
     settings = database.get_or_create_settings(42)
     assert bool(settings["reminders_enabled"]) is True
     assert bool(settings["autodraft_enabled"]) is True
+    assert settings["language_code"] == "ru"
+    assert bool(settings["language_selected"]) is False
 
     settings = database.toggle_autodraft(42)
     assert bool(settings["autodraft_enabled"]) is False
 
     settings = database.toggle_reminders(42)
     assert bool(settings["reminders_enabled"]) is False
+
+
+def test_chat_language_can_be_saved(tmp_path) -> None:
+    database = Database(str(tmp_path / "language.db"))
+    database.init_db()
+
+    settings = database.set_chat_language(43, "en")
+
+    assert settings["language_code"] == "en"
+    assert bool(settings["language_selected"]) is True
+    assert database.get_chat_language(43) == "en"
 
 
 def test_activate_trip_restores_archived_trip(tmp_path) -> None:

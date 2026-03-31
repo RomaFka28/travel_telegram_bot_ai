@@ -16,12 +16,13 @@ class DummyMessage:
         self.text = text
         self.replies: list[dict[str, object]] = []
 
-    async def reply_text(self, text: str, parse_mode=None, reply_markup=None) -> None:
+    async def reply_text(self, text: str, parse_mode=None, reply_markup=None, **kwargs) -> None:
         self.replies.append(
             {
                 "text": text,
                 "parse_mode": parse_mode,
                 "reply_markup": reply_markup,
+                **kwargs,
             }
         )
 
@@ -37,12 +38,13 @@ class DummyCallbackQuery:
     async def answer(self, text: str | None = None, show_alert: bool = False) -> None:
         self.answers.append({"text": text, "show_alert": show_alert})
 
-    async def edit_message_text(self, text: str, parse_mode=None, reply_markup=None) -> None:
+    async def edit_message_text(self, text: str, parse_mode=None, reply_markup=None, **kwargs) -> None:
         self.edits.append(
             {
                 "text": text,
                 "parse_mode": parse_mode,
                 "reply_markup": reply_markup,
+                **kwargs,
             }
         )
 
@@ -166,6 +168,42 @@ def test_plan_command_without_args_starts_pending_flow(tmp_path) -> None:
     assert "Отправьте следующим сообщением" in message.replies[-1]["text"]
     assert "сколько человек" in message.replies[-1]["text"]
     assert "в одну сторону" in message.replies[-1]["text"]
+
+
+def test_start_in_new_chat_shows_language_picker(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    update, message = make_update(chat_id=1701, chat_type="private")
+
+    asyncio.run(handlers.start(update, DummyContext()))
+
+    assert "Choose the bot language" in message.replies[-1]["text"]
+    assert message.replies[-1]["reply_markup"] is not None
+
+
+def test_language_callback_saves_english_and_replies_in_english(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    callback_update, callback_message, query = make_callback_update(data="language:set:en", chat_id=1702, chat_type="private")
+
+    asyncio.run(handlers.language_callback(callback_update, DummyContext()))
+
+    assert database.get_chat_language(1702) == "en"
+    assert "Hi! Add me to your trip chat" in query.edits[-1]["text"]
+
+
+def test_status_command_describes_active_trip_context(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(chat_id=1703)
+    asyncio.run(handlers.plan_command(create_update, DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])))
+    trip = database.get_active_trip(1703)
+    assert trip is not None
+
+    status_update, status_message = make_update(chat_id=1703)
+    asyncio.run(handlers.status_command(status_update, DummyContext()))
+
+    rendered = status_message.replies[-1]["text"]
+    assert "Ваш ответ по активной поездке этого чата" in rendered
+    assert "Сейчас речь про" in rendered
+    assert "Казань" in rendered
 
 
 def test_plan_pending_message_in_private_chat_creates_trip(tmp_path) -> None:

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import re
@@ -46,19 +46,35 @@ def _extract_json_object(text: str) -> dict:
 
 
 def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> dict:
-    system = (
-        "You are an AI travel assistant for Russian-speaking users. "
-        "Reply in Russian. Return only valid JSON with no markdown. "
-        "Use these exact string keys: "
-        "context_text, itinerary_text, logistics_text, stay_text, "
-        "alternatives_text, budget_breakdown_text, budget_total_text. "
-        "Use destination-appropriate currency when it is obvious; otherwise explain that local pricing needs a separate live check. "
-        "If web search is available, use fresh public information when it helps. "
-        "Do not invent exact live prices. If exact prices are unavailable, give an honest range or guidance. "
-        "Keep itinerary_text in the format 'День 1. ...\\nДень 2. ...'. "
-        "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Итого ориентир:'. "
-        "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека' or 'нужна проверка live-цен'."
-    )
+    language_code = "en" if getattr(request, "language_code", "ru") == "en" else "ru"
+    if language_code == "en":
+        system = (
+            "You are an AI travel assistant for Telegram users. "
+            "Reply in English. Return only valid JSON with no markdown. "
+            "Use these exact string keys: "
+            "context_text, itinerary_text, logistics_text, stay_text, "
+            "alternatives_text, budget_breakdown_text, budget_total_text. "
+            "Use destination-appropriate currency when it is obvious; otherwise explain that local pricing needs a separate live check. "
+            "If web search is available, use fresh public information when it helps. "
+            "Do not invent exact live prices. If exact prices are unavailable, give an honest range or guidance. "
+            "Keep itinerary_text in the format 'Day 1. ...\\nDay 2. ...'. "
+            "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Total estimate:'. "
+            "budget_total_text must be a single-line total such as '≈ 900-1400 EUR per person' or 'a live pricing check is needed'."
+        )
+    else:
+        system = (
+            "You are an AI travel assistant for Telegram users. "
+            "Reply in Russian. Return only valid JSON with no markdown. "
+            "Use these exact string keys: "
+            "context_text, itinerary_text, logistics_text, stay_text, "
+            "alternatives_text, budget_breakdown_text, budget_total_text. "
+            "Use destination-appropriate currency when it is obvious; otherwise explain that local pricing needs a separate live check. "
+            "If web search is available, use fresh public information when it helps. "
+            "Do not invent exact live prices. If exact prices are unavailable, give an honest range or guidance. "
+            "Keep itinerary_text in the format 'День 1. ...\\nДень 2. ...'. "
+            "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Итого ориентир:'. "
+            "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека' or 'нужна проверка live-цен'."
+        )
 
     user = (
         "Build a draft trip plan from this data:\n"
@@ -219,23 +235,27 @@ def classify_budget_text(config: OpenRouterConfig, text: str) -> BudgetInterpret
     display_text = str(obj.get("display_text") or "").strip()
     budget_class = str(obj.get("budget_class") or "").strip().lower()
     mode = str(obj.get("mode") or "").strip().lower()
-    amount_value = obj.get("amount_value")
-    confidence = float(obj.get("confidence") or 0.0)
+    amount_raw = obj.get("amount_value")
+    try:
+        amount_value = int(amount_raw) if amount_raw is not None else None
+    except (TypeError, ValueError):
+        amount_value = None
+    try:
+        confidence = float(obj.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+
     if budget_class not in {"эконом", "бизнес", "первый класс"}:
-        raise OpenRouterError(f"Unexpected budget_class: {budget_class}")
+        raise OpenRouterError(f"Unexpected budget_class from LLM: {budget_class!r}")
     if mode not in {"ceiling", "target", "floor", "approx", "class_only", "unlimited"}:
-        raise OpenRouterError(f"Unexpected mode: {mode}")
-    if amount_value is not None:
-        try:
-            amount_value = int(amount_value)
-        except (TypeError, ValueError) as exc:
-            raise OpenRouterError("amount_value must be integer or null") from exc
+        raise OpenRouterError(f"Unexpected mode from LLM: {mode!r}")
     if not display_text:
-        display_text = budget_class.title() if budget_class != "первый класс" else "Первый класс"
+        raise OpenRouterError("LLM did not return display_text")
+
     return BudgetInterpretation(
         display_text=display_text,
         budget_class=budget_class,
         mode=mode,
         amount_value=amount_value,
-        confidence=confidence,
+        confidence=max(0.0, min(1.0, confidence)),
     )

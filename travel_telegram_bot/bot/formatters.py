@@ -5,6 +5,7 @@ import html
 from bot.keyboards import STATUS_LABELS
 from database import Database
 from housing_search import HousingSearchResponse
+from i18n import tr
 from travel_result_models import deserialize_needs, deserialize_results
 from value_normalization import normalized_search_value
 
@@ -13,22 +14,33 @@ class TripFormatter:
     def __init__(self, database: Database) -> None:
         self._db = database
 
+    def _chat_language(self, chat_id: int | None) -> str:
+        if chat_id is None:
+            return "ru"
+        return self._db.get_chat_language(int(chat_id))
+
+    def _trip_language(self, trip: dict | None) -> str:
+        if not trip:
+            return "ru"
+        return self._chat_language(int(trip.get("chat_id") or 0))
+
     def _participant_lines(self, trip_id: int) -> list[str]:
         trip = self._db.get_trip_by_id(trip_id)
+        lang = self._trip_language(trip)
         participants = self._db.list_participants(trip_id)
         known_members = self._db.count_chat_members(int(trip["chat_id"])) if trip else 0
         responded = len(participants)
         if not participants:
             if known_members:
-                return [f"⏳ Пока никто не отметил статус. Прогресс: 0/{known_members}."]
-            return ["⏳ Пока никто не отметил статус."]
+                return [tr(lang, "participants_none_progress", known=known_members)]
+            return [tr(lang, "participants_none")]
 
         labels = {
-            "going": "✅ Едут",
-            "interested": "🤔 Думают",
-            "not_going": "❌ Не едут",
+            "going": tr(lang, "participants_going"),
+            "interested": tr(lang, "participants_interested"),
+            "not_going": tr(lang, "participants_not_going"),
         }
-        lines: list[str] = [f"Прогресс ответов: <b>{responded}/{max(known_members, responded)}</b>"]
+        lines: list[str] = [tr(lang, "participants_progress", responded=responded, known=max(known_members, responded))]
         for status in ("going", "interested", "not_going"):
             names = [participant["full_name"] for participant in participants if participant["status"] == status]
             if names:
@@ -38,11 +50,13 @@ class TripFormatter:
         return lines
 
     def _date_lines(self, trip_id: int) -> list[str]:
+        trip = self._db.get_trip_by_id(trip_id)
+        lang = self._trip_language(trip)
         date_options = self._db.list_date_options(trip_id)
         return [
             f"• {html.escape(option['label'])} — <b>{option['votes']}</b> голос(ов)"
             for option in date_options
-        ] or ["• пока не добавлены"]
+        ] or [tr(lang, "date_options_empty")]
 
     @staticmethod
     def _preview_multiline(text: str, *, max_blocks: int) -> str:
@@ -56,14 +70,25 @@ class TripFormatter:
         return html.escape(text or "—")
 
     @staticmethod
-    def _category_title(key: str) -> str:
-        return {
-            "flight_results": "Билеты",
-            "housing_results": "Жильё",
-            "activity_results": "Экскурсии",
-            "transport_results": "Дорога",
-            "rental_results": "Аренда",
-        }.get(key, key)
+    def _category_title(key: str, language_code: str = "ru") -> str:
+        labels = {
+            "ru": {
+                "flight_results": "Билеты",
+                "housing_results": "Жильё",
+                "activity_results": "Экскурсии",
+                "transport_results": "Дорога",
+                "rental_results": "Аренда",
+            },
+            "en": {
+                "flight_results": "Tickets",
+                "housing_results": "Housing",
+                "activity_results": "Activities",
+                "transport_results": "Transport",
+                "rental_results": "Rental",
+            },
+        }
+        lang = "en" if language_code == "en" else "ru"
+        return labels[lang].get(key, key)
 
     @staticmethod
     def _clean_result_title(result_title: str, category_title: str) -> str:
@@ -87,12 +112,13 @@ class TripFormatter:
         results = deserialize_results(trip.get(column))
         if not results:
             return ""
-        category_title = self._category_title(column)
+        lang = self._trip_language(trip)
+        category_title = self._category_title(column, lang)
         lines = [f"<b>{category_title}</b>"]
         for result in results[:3]:
             clean_title = self._clean_result_title(result.title, category_title)
             link_url = html.escape(result.url, quote=True)
-            lines.append(f"• <b>{html.escape(clean_title)}</b> — <a href=\"{link_url}\">открыть</a>")
+            lines.append(f"• <b>{html.escape(clean_title)}</b> — <a href=\"{link_url}\">{html.escape(tr(lang, 'open_link'))}</a>")
             hint = self._display_result_hint(result)
             extra_parts = [html.escape(part) for part in (hint, result.budget_fit, result.note) if part]
             if extra_parts:
@@ -100,20 +126,21 @@ class TripFormatter:
         return "\n".join(lines)
 
     def _detected_needs_line(self, trip: dict) -> str:
+        lang = self._trip_language(trip)
         detected_needs = deserialize_needs(trip.get("detected_needs"))
         if not detected_needs:
             return ""
         labels = {
-            "tickets": "билеты",
-            "housing": "жильё",
-            "excursions": "экскурсии",
-            "road": "дорога",
-            "car_rental": "аренда авто",
-            "bike_rental": "аренда байка",
-            "transfers": "трансферы",
+            "tickets": tr(lang, "need_tickets"),
+            "housing": tr(lang, "need_housing"),
+            "excursions": tr(lang, "need_excursions"),
+            "road": tr(lang, "need_road"),
+            "car_rental": tr(lang, "need_car_rental"),
+            "bike_rental": tr(lang, "need_bike_rental"),
+            "transfers": tr(lang, "need_transfers"),
         }
         rendered = ", ".join(labels.get(item, item) for item in detected_needs)
-        return f"\n🧩 По переписке вижу: <b>{html.escape(rendered)}</b>"
+        return f"\n{tr(lang, 'detected_needs_intro')}: <b>{html.escape(rendered)}</b>"
 
     @staticmethod
     def _has_housing_type_hint(trip: dict) -> bool:
@@ -124,31 +151,32 @@ class TripFormatter:
         return any(keyword in combined for keyword in ("отел", "квартир", "апарт", "дом", "студи", "хостел"))
 
     def _planning_readiness(self, trip: dict, trip_id: int) -> tuple[str, str]:
+        lang = self._trip_language(trip)
         detected_needs = set(deserialize_needs(trip.get("detected_needs")))
         known_members = self._db.count_chat_members(int(trip["chat_id"])) if trip.get("chat_id") else 0
         responded = len(self._db.list_participants(trip_id))
         interests_text = normalized_search_value(trip.get("interests_text"))
 
         checks: list[tuple[str, bool]] = [
-            ("направление", bool(normalized_search_value(trip.get("destination")))),
-            ("даты", bool(normalized_search_value(trip.get("dates_text")))),
-            ("размер группы", int(trip.get("group_size") or 0) > 0),
-            ("бюджет", bool(normalized_search_value(trip.get("budget_text")))),
+            (tr(lang, "check_destination"), bool(normalized_search_value(trip.get("destination")))),
+            (tr(lang, "check_dates"), bool(normalized_search_value(trip.get("dates_text")))),
+            (tr(lang, "check_group"), int(trip.get("group_size") or 0) > 0),
+            (tr(lang, "check_budget"), bool(normalized_search_value(trip.get("budget_text")))),
         ]
         if "tickets" in detected_needs:
-            checks.append(("город вылета", bool(normalized_search_value(trip.get("origin")))))
+            checks.append((tr(lang, "check_origin"), bool(normalized_search_value(trip.get("origin")))))
         if "housing" in detected_needs:
-            checks.append(("тип жилья", self._has_housing_type_hint(trip)))
+            checks.append((tr(lang, "check_housing_type"), self._has_housing_type_hint(trip)))
         if "excursions" in detected_needs:
-            checks.append(("формат экскурсий", bool(interests_text)))
+            checks.append((tr(lang, "check_excursions"), bool(interests_text)))
         if "road" in detected_needs:
-            checks.append(("день выезда", bool(normalized_search_value(trip.get("dates_text")))))
+            checks.append((tr(lang, "check_departure_day"), bool(normalized_search_value(trip.get("dates_text")))))
         if known_members > 1:
-            checks.append(("ответы участников", responded > 0))
+            checks.append((tr(lang, "check_participant_replies"), responded > 0))
 
         ready_count = sum(1 for _, is_ready in checks if is_ready)
         total_count = max(1, len(checks))
-        status_lines = [f"Готовность плана: <b>{ready_count}/{total_count}</b>"]
+        status_lines = [tr(lang, "readiness_title", ready=ready_count, total=total_count)]
         checklist_lines = [
             f"{'✅' if is_ready else '⏳'} {label}"
             for label, is_ready in checks
@@ -160,165 +188,144 @@ class TripFormatter:
         return bool(normalized_search_value(trip.get("destination")))
 
     @staticmethod
-    def _budget_class_label(budget_text: str) -> str:
+    def _budget_class_key(budget_text: str) -> str:
         lowered = (budget_text or "").lower()
         if any(token in lowered for token in ("первый класс", "без ограничений", "не ограничен", "люкс", "премиум", "vip", "вип")):
-            return "Первый класс"
+            return "trip_class_first"
         if any(token in lowered for token in ("эконом", "подешевле", "недорого", "дешево", "дёшево")):
-            return "Эконом"
+            return "trip_class_economy"
         digits = [int(value) for value in "".join(ch if ch.isdigit() else " " for ch in lowered).split()]
         if digits:
             amount = digits[0]
             if amount <= 40000:
-                return "Эконом"
+                return "trip_class_economy"
             if amount >= 120000:
-                return "Первый класс"
-        return "Бизнес"
+                return "trip_class_first"
+        return "trip_class_business"
+
+    def _budget_class_label(self, budget_text: str, language_code: str = "ru") -> str:
+        return tr(language_code, self._budget_class_key(budget_text))
 
     def build_start_text(self) -> str:
-        return (
-            "Привет! Добавьте меня в чат поездки, включите авто-анализ в /settings и обсуждайте поездку обычными сообщениями.\n\n"
-            "Я быстро соберу черновик: куда, когда, сколько человек, какая погода и где искать билеты и жильё.\n\n"
-            "Главное:\n"
-            "• /summary — текущий план\n"
-            "• /tickets — цены на билеты через Travelpayouts\n"
-            "• /status — ваш ответ по поездке\n"
-            "• /plan — вручную начать план и прислать описание следующим сообщением\n"
-            "• /settings — включить или выключить авто-анализ\n"
-            "• /hotels — быстрый сценарий по жилью\n"
-            "• /trips — история поездок\n"
-            "• /help — короткая справка"
-        )
+        return tr("ru", "start_intro")
 
-    def build_help_text(self) -> str:
-        return (
-            "<b>Как использовать</b>\n"
-            "1. Добавьте бота в групповой чат.\n"
-            "2. Включите авто-анализ в <code>/settings</code>.\n"
-            "3. Обсуждайте поездку обычными сообщениями.\n"
-            "4. Открывайте <code>/summary</code>, когда нужен текущий план.\n\n"
-            "<b>Основные команды</b>\n"
-            "• <code>/summary</code> — сводка по активной поездке\n"
-            "• <code>/tickets</code> — цены на билеты и оценка по бюджету\n"
-            "• <code>/status</code> — ваш ответ по поездке\n"
-            "• <code>/plan</code> — начать ручной бриф и прислать описание следующим сообщением\n"
-            "• <code>/settings</code> — режим чата\n"
-            "• <code>/hotels</code> — жильё и подготовка к более точному поиску\n"
-            "• <code>/trips</code> — история поездок\n"
-            "• <code>/select_trip ID</code> — вернуть поездку из архива\n\n"
-            "<b>Что бот делает сейчас</b>\n"
-            "• собирает поездку из переписки\n"
-            "• показывает погоду\n"
-            "• подтягивает цены на билеты через Travelpayouts, если известен город вылета\n"
-            "• подбирает ссылки по направлению: для РФ/СНГ локальные сервисы, для зарубежа международные\n"
-            "• хранит активную поездку и историю\n\n"
-            "<b>Ограничения</b>\n"
-            "• бот не бронирует билеты и жильё\n"
-            "• цены смотрятся по ссылкам на внешних сайтах"
-        )
+    def build_start_text_for_language(self, language_code: str) -> str:
+        return tr(language_code, "start_intro")
+
+    def build_help_text(self, language_code: str = "ru") -> str:
+        return tr(language_code, "help_text")
 
     def build_settings_text(self, chat_id: int) -> str:
         settings = self._db.get_or_create_settings(chat_id)
+        lang = self._chat_language(chat_id)
         active_trip = self._db.get_active_trip(chat_id)
         reminders_enabled = bool(settings["reminders_enabled"])
         autodraft_enabled = bool(settings["autodraft_enabled"])
 
         active_trip_line = (
-            f"Активная поездка: <b>{html.escape(active_trip['title'])}</b>"
+            f"{tr(lang, 'settings_active_trip')}: <b>{html.escape(active_trip['title'])}</b>"
             if active_trip
-            else "Активная поездка: <b>нет</b>"
+            else f"{tr(lang, 'settings_active_trip')}: <b>{tr(lang, 'settings_none')}</b>"
         )
         return (
-            "<b>Настройки чата</b>\n"
+            f"<b>{tr(lang, 'settings_title')}</b>\n"
             f"{active_trip_line}\n\n"
-            f"• Напоминания: <b>{'включены' if reminders_enabled else 'выключены'}</b>\n"
-            f"• Авто-черновики из сообщений: <b>{'включены' if autodraft_enabled else 'выключены'}</b>\n\n"
-            "Авто-черновики нужны, чтобы бот предлагал план, когда видит обсуждение поездки в группе.\n\n"
-            "<b>Как это работает</b>\n"
-            "• бот анализирует только те сообщения, которые увидел после добавления в группу и после включения авто-анализа\n"
-            "• старую историю чата задним числом Telegram боту не отдаёт\n"
-            "• для черновика бот смотрит на недавнее окно сообщений, а потом обновляет активную поездку по новым репликам\n\n"
-            "Если хотите только ручной режим через команды, выключите этот флаг."
+            f"• {tr(lang, 'settings_reminders')}: <b>{tr(lang, 'settings_reminders_on') if reminders_enabled else tr(lang, 'settings_reminders_off')}</b>\n"
+            f"• {tr(lang, 'settings_autodraft')}: <b>{tr(lang, 'settings_autodraft_on') if autodraft_enabled else tr(lang, 'settings_autodraft_off')}</b>\n"
+            f"• {tr(lang, 'settings_language')}: <b>{tr(lang, 'language_name')}</b>\n\n"
+            + tr(lang, "settings_explainer")
         )
 
-    def build_trip_created_text(self, *, replaced_trip: bool, chat_type: str | None = None) -> str:
+    def build_trip_created_text(self, *, replaced_trip: bool, chat_type: str | None = None, language_code: str = "ru") -> str:
         is_group = chat_type in {"group", "supergroup"}
         if replaced_trip:
             if is_group:
-                return "Собрал новый план и сделал его активным для этой группы. Предыдущий сохранён в истории."
-            return "Собрал новый план и сделал его активным. Предыдущий сохранён в истории."
+                return tr(language_code, "trip_created_replaced_group")
+            return tr(language_code, "trip_created_replaced_private")
         if is_group:
-            return "Собрал новый план для этой группы."
-        return "Собрал новый план."
+            return tr(language_code, "trip_created_new_group")
+        return tr(language_code, "trip_created_new_private")
 
-    def build_status_updated_text(self, status: str) -> str:
+    def build_status_updated_text(self, status: str, language_code: str = "ru") -> str:
         mapping = {
-            "going": "Отметил, что вы едете.",
-            "interested": "Отметил, что вы пока думаете.",
-            "not_going": "Отметил, что вы не едете.",
+            "going": tr(language_code, "status_updated_going"),
+            "interested": tr(language_code, "status_updated_interested"),
+            "not_going": tr(language_code, "status_updated_not_going"),
         }
-        return mapping.get(status, "Статус обновлён.")
+        return mapping.get(status, tr(language_code, "status_updated_default"))
 
     def build_participants_text(self, trip_id: int) -> str:
-        return "<b>Статусы участников</b>\n" + "\n".join(self._participant_lines(trip_id))
+        trip = self._db.get_trip_by_id(trip_id)
+        lang = self._trip_language(trip)
+        return tr(lang, "participants_title") + "\n" + "\n".join(self._participant_lines(trip_id))
 
-    def build_status_options_text(self) -> str:
+    def build_status_options_text(self, trip_id: int) -> str:
+        trip = self._db.get_trip_by_id(trip_id)
+        if not trip:
+            return tr("ru", "trip_not_found")
+        lang = self._trip_language(trip)
+        destination = html.escape(normalized_search_value(trip.get("destination")) or tr(lang, "settings_none"))
+        dates_text = html.escape(normalized_search_value(trip.get("dates_text")) or tr(lang, "status_unknown_dates"))
+        title = html.escape(trip.get("title") or destination)
+        group_size = int(trip.get("group_size") or 0)
         return (
-            "Выберите ваш ответ по поездке.\n\n"
-            "Здесь только статусы: ✅ Еду / 🤔 Думаю / ❌ Не еду.\n"
-            "Маршрут, изменение и удаление доступны в карточке поездки."
+            f"{tr(lang, 'status_prompt_intro')}\n\n"
+            f"{tr(lang, 'status_prompt_trip')}:\n"
+            f"<b>{title}</b>\n"
+            f"{tr(lang, 'summary_destination')}: <b>{destination}</b>\n"
+            f"{tr(lang, 'status_prompt_dates')}: <b>{dates_text}</b>\n"
+            f"{tr(lang, 'status_prompt_group')}: <b>{group_size}</b>\n\n"
+            f"{tr(lang, 'status_choose')}\n"
+            f"{tr(lang, 'status_going_hint')}\n"
+            f"{tr(lang, 'status_interested_hint')}\n"
+            f"{tr(lang, 'status_not_going_hint')}\n\n"
+            f"{tr(lang, 'status_footer')}"
         )
 
     def build_trip_list_text(self, chat_id: int) -> str:
+        lang = self._chat_language(chat_id)
         trips = self._db.list_trips(chat_id)
         if not trips:
-            return "В этом чате пока нет поездок."
+            return tr(lang, "trip_list_empty")
 
-        lines = ["<b>Поездки этого чата</b>"]
+        lines = [tr(lang, "trip_list_title")]
         for trip in trips[:10]:
-            badge = "🟢 active" if trip["status"] == "active" else "📦 archived"
-            destination = html.escape(normalized_search_value(trip["destination"]) or "без направления")
-            dates_text = html.escape(normalized_search_value(trip["dates_text"]) or "без дат")
+            badge = tr(lang, "trip_status_active") if trip["status"] == "active" else tr(lang, "trip_status_archived")
+            destination = html.escape(normalized_search_value(trip["destination"]) or tr(lang, "unknown_destination"))
+            dates_text = html.escape(normalized_search_value(trip["dates_text"]) or tr(lang, "unknown_dates"))
             lines.append(
                 f"• <b>{int(trip['id'])}</b> — {html.escape(trip['title'])} [{badge}]"
                 f"\n  {destination}, {dates_text}"
             )
         lines.append("")
-        lines.append("Можно открыть поездку или удалить её кнопками ниже.")
+        lines.append(tr(lang, "trip_list_hint"))
         return "\n".join(lines)
 
     def build_trip_delete_confirm_text(self, trip: dict) -> str:
-        destination = html.escape(normalized_search_value(trip.get("destination")) or "без направления")
-        dates = html.escape(normalized_search_value(trip.get("dates_text")) or "даты не указаны")
-        return (
-            f"Удалить поездку <b>{html.escape(trip['title'])}</b> навсегда?\n"
-            f"📍 {destination}, {dates}\n\n"
-            "Это действие удалит её из истории и активных без возможности восстановления."
-        )
+        lang = self._trip_language(trip)
+        destination = html.escape(normalized_search_value(trip.get("destination")) or tr(lang, "unknown_destination"))
+        dates = html.escape(normalized_search_value(trip.get("dates_text")) or tr(lang, "status_unknown_dates"))
+        return tr(lang, "trip_delete_confirm_text", title=html.escape(trip["title"]), destination=destination, dates=dates)
 
-    def build_group_clarifying_question(self) -> str:
-        return "Похоже, вы обсуждаете поездку. Куда хотите поехать?"
+    def build_group_clarifying_question(self, language_code: str = "ru") -> str:
+        return tr(language_code, "group_clarify_destination")
 
-    def build_group_destination_vote_text(self, options: list[tuple[str, int]]) -> str:
+    def build_group_destination_vote_text(self, options: list[tuple[str, int]], language_code: str = "ru") -> str:
         if not options:
-            return "Вижу, что направление ещё не определилось. Напишите, какой город сейчас основной."
-        rendered = "\n".join(f"• {html.escape(name)} — {count} упомин." for name, count in options[:4])
-        return (
-            "Пока в чате спорят о направлении, поэтому маршрут ещё не собираю.\n\n"
-            "<b>Сейчас вижу такие варианты</b>\n"
-            f"{rendered}\n\n"
-            "Когда один вариант начнёт явно побеждать, соберу одну активную поездку для группы."
-        )
+            return tr(language_code, "group_vote_fallback")
+        rendered = "\n".join(f"• {html.escape(name)} — {count}" for name, count in options[:4])
+        return tr(language_code, "group_vote_intro", rendered=rendered)
 
     def build_group_autodraft_reply(self, trip: dict) -> str:
+        lang = self._trip_language(trip)
         weather_text = (trip.get("weather_text") or "").strip()
         summary_short = (trip.get("summary_short_text") or "").strip()
         open_questions = (trip.get("open_questions_text") or "").strip()
         entry_requirements = (trip.get("entry_requirements_text") or "").strip()
-        destination = normalized_search_value(trip.get("destination")) or "не указано"
-        dates_text = normalized_search_value(trip.get("dates_text")) or "уточняется"
-        budget_text = normalized_search_value(trip.get("budget_text")) or "не указан"
-        budget_class = self._budget_class_label(budget_text)
+        destination = normalized_search_value(trip.get("destination")) or tr(lang, "unknown_destination")
+        dates_text = normalized_search_value(trip.get("dates_text")) or tr(lang, "status_unknown_dates")
+        budget_text = normalized_search_value(trip.get("budget_text")) or tr(lang, "settings_none")
+        budget_class = self._budget_class_label(budget_text, lang)
         readiness_text, checklist_text = self._planning_readiness(trip, int(trip["id"]))
         has_destination = self._has_destination(trip)
         sections = [
@@ -333,96 +340,101 @@ class TripFormatter:
         direction_block = (
             html.escape(summary_short)
             if summary_short and has_destination
-            else "Жду направление поездки, чтобы собрать осмысленный маршрут, жильё и полезные ссылки."
+            else tr(lang, "group_wait_destination")
         )
         return (
-            f"🧭 Собрал черновик поездки\n"
-            f"Куда: <b>{html.escape(destination)}</b>\n"
-            f"Когда: <b>{html.escape(dates_text)}</b>\n"
-            f"Людей: <b>{int(trip['group_size'] or 0)}</b>\n"
-            f"Бюджет: <b>{html.escape(budget_text)}</b>\n"
-            f"Класс поездки: <b>{html.escape(budget_class)}</b>\n"
+            f"{tr(lang, 'group_draft_title')}\n"
+            f"{tr(lang, 'group_where')}: <b>{html.escape(destination)}</b>\n"
+            f"{tr(lang, 'group_when')}: <b>{html.escape(dates_text)}</b>\n"
+            f"{tr(lang, 'group_people')}: <b>{int(trip['group_size'] or 0)}</b>\n"
+            f"{tr(lang, 'group_budget')}: <b>{html.escape(budget_text)}</b>\n"
+            f"{tr(lang, 'group_trip_class')}: <b>{html.escape(budget_class)}</b>\n"
             + self._detected_needs_line(trip)
             + f"\n\n{readiness_text}\n{html.escape(checklist_text)}"
-            + f"\n\n<b>Коротко</b>\n{direction_block}"
-            + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
-            + (f"\n\n<b>Въезд и документы</b>\n{html.escape(entry_requirements)}" if entry_requirements else "")
+            + f"\n\n<b>{tr(lang, 'group_short')}</b>\n{direction_block}"
+            + (f"\n\n<b>{tr(lang, 'summary_weather')}</b>\n{html.escape(weather_text)}" if weather_text else "")
+            + (f"\n\n<b>{tr(lang, 'summary_entry')}</b>\n{html.escape(entry_requirements)}" if entry_requirements else "")
             + (f"\n\n{compact_sections}" if compact_sections and has_destination else "")
-            + (f"\n\n<b>Что ещё уточнить</b>\n{html.escape(open_questions)}" if open_questions else "")
-            + "\n\nОткройте /summary, если нужен полный план."
+            + (f"\n\n<b>{tr(lang, 'group_open_questions')}</b>\n{html.escape(open_questions)}" if open_questions else "")
+            + f"\n\n{tr(lang, 'summary_use_summary')}"
         )
 
     def build_housing_search_text(self, trip: dict, response: HousingSearchResponse) -> str:
-        destination = normalized_search_value(trip["destination"]) or "поездки"
+        lang = self._trip_language(trip)
+        destination = normalized_search_value(trip["destination"]) or tr(lang, "unknown_destination")
         lines = [
-            f"<b>Жильё для {html.escape(destination)}</b>",
+            tr(lang, "housing_search_title", destination=html.escape(destination)),
             html.escape(response.summary),
         ]
         if response.results:
             lines.append("")
-            lines.append("<b>Что открыть</b>")
+            lines.append(tr(lang, "housing_search_open"))
             for result in response.results[:5]:
                 link_url = html.escape(result.url, quote=True)
                 lines.append(
-                    f"• <b>{html.escape(result.source)}</b> — <a href=\"{link_url}\">открыть</a>\n"
-                    f"  {html.escape(self._clean_result_title(result.title, 'Жильё'))}\n"
+                    f"• <b>{html.escape(result.source)}</b> — <a href=\"{link_url}\">{html.escape(tr(lang, 'open_link'))}</a>\n"
+                    f"  {html.escape(self._clean_result_title(result.title, self._category_title('housing_results', lang)))}\n"
                     f"  {html.escape(self._display_result_hint(result))}"
                 )
         else:
             lines.append("")
-            lines.append("Пока не нашёл вариантов, попробуйте позже или откройте /summary.")
+            lines.append(tr(lang, "housing_try_later"))
         return "\n".join(lines)
 
     def build_route_section_text(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
-            return "<b>Поездка не найдена.</b>"
+            return tr("ru", "trip_not_found")
+        lang = self._trip_language(trip)
         return (
-            "<b>Маршрут по дням</b>\n"
-            f"{html.escape(trip['itinerary_text'] or 'Маршрут пока не собран.')}"
+            f"{tr(lang, 'route_title')}\n"
+            f"{html.escape(trip['itinerary_text'] or tr(lang, 'route_empty'))}"
         )
 
     def build_tickets_section_text(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
-            return "<b>Поездка не найдена.</b>"
+            return tr("ru", "trip_not_found")
+        lang = self._trip_language(trip)
         section = self._category_section(trip, "flight_results")
         if section:
             return section
         tickets_text = (trip.get("tickets_text") or "").strip()
         if tickets_text:
-            return f"<b>Билеты</b>\n{html.escape(tickets_text)}"
-        return "<b>Билеты</b>\nПока нет данных по билетам. Уточните город вылета и даты."
+            return f"{tr(lang, 'tickets_title')}\n{html.escape(tickets_text)}"
+        return f"{tr(lang, 'tickets_title')}\n{tr(lang, 'tickets_empty')}"
 
     def build_housing_section_text(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
-            return "<b>Поездка не найдена.</b>"
+            return tr("ru", "trip_not_found")
+        lang = self._trip_language(trip)
         section = self._category_section(trip, "housing_results")
         if section:
             return section
-        return "<b>Жильё</b>\nПока нет данных по жилью. Уточните направление и даты."
+        return f"{tr(lang, 'housing_title')}\n{tr(lang, 'housing_empty')}"
 
     def _build_brief_html(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
             return "<b>Поездка не найдена.</b>"
-        destination = normalized_search_value(trip["destination"]) or "не указано"
-        origin = normalized_search_value(trip["origin"]) or "не указано"
-        dates_text = normalized_search_value(trip["dates_text"]) or "не указаны"
-        budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
-        budget_class = self._budget_class_label(budget_text)
-        interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
+        lang = self._trip_language(trip)
+        destination = normalized_search_value(trip["destination"]) or tr(lang, "unknown_destination")
+        origin = normalized_search_value(trip["origin"]) or tr(lang, "settings_none")
+        dates_text = normalized_search_value(trip["dates_text"]) or tr(lang, "status_unknown_dates")
+        budget_text = normalized_search_value(trip["budget_text"]) or tr(lang, "settings_none")
+        budget_class = self._budget_class_label(budget_text, lang)
+        interests_text = normalized_search_value(trip["interests_text"]) or tr(lang, "settings_none")
         lines = [
             f"<b>🧾 {html.escape(trip['title'])}</b>",
-            f"📍 Направление: <b>{html.escape(destination)}</b>",
-            f"🛫 Откуда: <b>{html.escape(origin)}</b>",
-            f"📅 Даты: <b>{html.escape(dates_text)}</b>",
+            f"{tr(lang, 'summary_destination')}: <b>{html.escape(destination)}</b>",
+            f"{tr(lang, 'summary_origin')}: <b>{html.escape(origin)}</b>",
+            f"{tr(lang, 'summary_dates')}: <b>{html.escape(dates_text)}</b>",
             f"⏱ Длительность: <b>{int(trip['days_count'] or 0)} дн.</b>",
             f"👥 Размер группы: <b>{int(trip['group_size'] or 0)} чел.</b>",
-            f"💸 Бюджет: <b>{html.escape(budget_text)}</b>",
-            f"💼 Класс поездки: <b>{html.escape(budget_class)}</b>",
-            f"🎯 Интересы: <b>{html.escape(interests_text)}</b>",
+            f"{tr(lang, 'summary_budget')}: <b>{html.escape(budget_text)}</b>",
+            f"{tr(lang, 'summary_trip_class')}: <b>{html.escape(budget_class)}</b>",
+            f"{tr(lang, 'summary_interests')}: <b>{html.escape(interests_text)}</b>",
         ]
         if trip["source_prompt"]:
             lines.append("")
@@ -433,30 +445,31 @@ class TripFormatter:
     def _build_summary_html(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
-            return "<b>Поездка не найдена.</b>"
+            return tr("ru", "trip_not_found")
+        lang = self._trip_language(trip)
 
-        destination = normalized_search_value(trip["destination"]) or "не указано"
-        origin = normalized_search_value(trip["origin"]) or "не указано"
-        dates_text = normalized_search_value(trip["dates_text"]) or "не указаны"
-        budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
-        budget_class = self._budget_class_label(budget_text)
-        interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
+        destination = normalized_search_value(trip["destination"]) or tr(lang, "unknown_destination")
+        origin = normalized_search_value(trip["origin"]) or tr(lang, "settings_none")
+        dates_text = normalized_search_value(trip["dates_text"]) or tr(lang, "status_unknown_dates")
+        budget_text = normalized_search_value(trip["budget_text"]) or tr(lang, "settings_none")
+        budget_class = self._budget_class_label(budget_text, lang)
+        interests_text = normalized_search_value(trip["interests_text"]) or tr(lang, "settings_none")
         has_destination = self._has_destination(trip)
         stay_preview = self._escape_block(
             self._preview_multiline(trip["stay_text"] or "", max_blocks=1)
             if has_destination
-            else "Подбор жилья начну после того, как определится направление."
+            else tr(lang, "group_wait_destination")
         )
         context_preview = self._escape_block(
             self._preview_multiline(trip["context_text"] or "", max_blocks=1)
             if has_destination
-            else "Направление пока не определено, поэтому блок с контекстом ещё не заполнен."
+            else tr(lang, "summary_short_no_destination")
         )
         notes_text = self._escape_block(trip["notes"] or "—")
         weather_text = (trip["weather_text"] or "").strip()
         entry_requirements = (trip.get("entry_requirements_text") or "").strip()
-        weather_block = f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else ""
-        entry_block = f"\n\n<b>Въезд и документы</b>\n{html.escape(entry_requirements)}" if entry_requirements else ""
+        weather_block = f"\n\n<b>{tr(lang, 'summary_weather')}</b>\n{html.escape(weather_text)}" if weather_text else ""
+        entry_block = f"\n\n<b>{tr(lang, 'summary_entry')}</b>\n{html.escape(entry_requirements)}" if entry_requirements else ""
         sections = [
             self._category_section(trip, "flight_results"),
             self._category_section(trip, "housing_results"),
@@ -471,38 +484,38 @@ class TripFormatter:
         short_summary_text = (
             summary_short
             if summary_short and has_destination
-            else "Направление пока не определено. Как только появятся город и даты, бот пересоберёт маршрут и ссылки."
+            else tr(lang, "summary_short_no_destination")
         )
-        short_block = f"\n\n<b>Быстрый вывод</b>\n{html.escape(short_summary_text)}"
+        short_block = f"\n\n<b>{tr(lang, 'summary_quick')}</b>\n{html.escape(short_summary_text)}"
         open_questions = (trip.get("open_questions_text") or "").strip()
-        open_questions_block = f"\n\n<b>Открытые вопросы</b>\n{html.escape(open_questions)}" if open_questions else ""
+        open_questions_block = f"\n\n<b>{tr(lang, 'summary_open_questions')}</b>\n{html.escape(open_questions)}" if open_questions else ""
         readiness_text, checklist_text = self._planning_readiness(trip, trip_id)
 
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
-            f"📍 Направление: <b>{html.escape(destination)}</b>\n"
-            f"🛫 Откуда: <b>{html.escape(origin)}</b>\n"
-            f"📅 Даты: <b>{html.escape(dates_text)}</b> · <b>{int(trip['days_count'] or 0)} дн.</b>\n"
-            f"👥 Группа: <b>{int(trip['group_size'] or 0)} чел.</b>\n"
-            f"💸 Целевой бюджет: <b>{html.escape(budget_text)}</b>\n"
-            f"💼 Класс поездки: <b>{html.escape(budget_class)}</b>\n"
-            f"🎯 Интересы: <b>{html.escape(interests_text)}</b>"
+            f"{tr(lang, 'summary_destination')}: <b>{html.escape(destination)}</b>\n"
+            f"{tr(lang, 'summary_origin')}: <b>{html.escape(origin)}</b>\n"
+            f"{tr(lang, 'summary_dates')}: <b>{html.escape(dates_text)}</b> · <b>{int(trip['days_count'] or 0)} дн.</b>\n"
+            f"{tr(lang, 'summary_group')}: <b>{int(trip['group_size'] or 0)} чел.</b>\n"
+            f"{tr(lang, 'summary_budget')}: <b>{html.escape(budget_text)}</b>\n"
+            f"{tr(lang, 'summary_trip_class')}: <b>{html.escape(budget_class)}</b>\n"
+            f"{tr(lang, 'summary_interests')}: <b>{html.escape(interests_text)}</b>"
             + self._detected_needs_line(trip)
             + "\n"
             + f"\n{readiness_text}\n{html.escape(checklist_text)}"
             + short_block
             + "\n\n"
-            f"<b>Коротко о направлении</b>\n{context_preview}\n\n"
-            "<b>Маршрут</b>\nОткрывается отдельной кнопкой ниже.\n\n"
-            f"<b>Где жить</b>\n{stay_preview}\n\n"
-            f"<b>Ориентир по бюджету</b>\n{html.escape(trip['budget_total_text'] or 'не рассчитан')}\n\n"
-            f"<b>Участники</b>\n"
+            f"<b>{tr(lang, 'summary_context')}</b>\n{context_preview}\n\n"
+            f"<b>{tr(lang, 'summary_route')}</b>\n{tr(lang, 'summary_route_button_note')}\n\n"
+            f"<b>{tr(lang, 'summary_stay')}</b>\n{stay_preview}\n\n"
+            f"<b>{tr(lang, 'summary_budget_total')}</b>\n{html.escape(trip['budget_total_text'] or tr(lang, 'summary_budget_total_empty'))}\n\n"
+            f"<b>{tr(lang, 'summary_participants')}</b>\n"
             + "\n".join(self._participant_lines(trip_id))
             + "\n\n"
-            + "<b>Варианты дат</b>\n"
+            + f"<b>{tr(lang, 'summary_date_options')}</b>\n"
             + "\n".join(self._date_lines(trip_id))
             + "\n\n"
-            + f"<b>Заметки</b>\n{notes_text}"
+            + f"<b>{tr(lang, 'summary_notes')}</b>\n{notes_text}"
             + open_questions_block
             + (f"\n\n{structured_block}" if structured_block else "")
             + links_block
