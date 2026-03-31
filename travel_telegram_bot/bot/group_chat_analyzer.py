@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 import re
 
 from travel_links import CATEGORY_KEYWORDS, detect_link_needs
@@ -25,6 +26,8 @@ class ChatSignal:
     interests: list[str] = field(default_factory=list)
     detected_needs: list[str] = field(default_factory=list)
     need_strengths: dict[str, int] = field(default_factory=dict)
+    destination_votes: list[tuple[str, int]] = field(default_factory=list)
+    consensus_ready: bool = False
     raw_text: str = ""
 
 
@@ -68,7 +71,7 @@ class GroupChatAnalyzer:
             raw_dates = self._planner._extract_dates(text)
             dates_text = raw_dates if raw_dates != "не указаны" else None
             raw_budget = self._planner._extract_budget(text)
-            budget_hint = raw_budget if raw_budget != "средний" else None
+            budget_hint = raw_budget if raw_budget != "Бизнес" else None
             interests = self._planner._extract_interests(text)
 
         participants = self._extract_names(text)
@@ -89,7 +92,36 @@ class GroupChatAnalyzer:
     def analyze_messages(self, messages: list[str]) -> ChatSignal:
         cleaned = [message.strip() for message in messages if (message or "").strip()]
         combined = "\n".join(cleaned[-8:])
-        return self.analyze(combined)
+        signal = self.analyze(combined)
+
+        destination_counts: dict[str, int] = {}
+        for message in cleaned[-8:]:
+            try:
+                destination = self._planner._extract_destination(message)
+            except Exception:
+                destination = None
+            if not destination:
+                continue
+            display_name = self._planner._display_destination(destination)
+            destination_counts[display_name] = destination_counts.get(display_name, 0) + 1
+
+        ranked_destinations = sorted(destination_counts.items(), key=lambda item: (-item[1], item[0]))
+        signal.destination_votes = ranked_destinations
+        if not ranked_destinations:
+            return signal
+
+        leader_name, leader_votes = ranked_destinations[0]
+        second_votes = ranked_destinations[1][1] if len(ranked_destinations) > 1 else 0
+        total_votes = sum(count for _, count in ranked_destinations)
+        signal.consensus_ready = len(ranked_destinations) == 1 or (
+            leader_votes >= max(2, math.ceil(total_votes / 2))
+            and leader_votes > second_votes
+        )
+        if signal.consensus_ready:
+            signal.destination = leader_name
+        elif len(ranked_destinations) > 1:
+            signal.destination = None
+        return signal
 
     def _extract_names(self, text: str) -> list[str]:
         tokens = re.findall(r"\b[А-ЯЁ][а-яё]{2,}\b", text)

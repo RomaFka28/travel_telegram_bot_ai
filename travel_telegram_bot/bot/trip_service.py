@@ -35,7 +35,7 @@ class TripService:
             "dates_text": trip["dates_text"] or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u044b",
             "days_count": int(trip["days_count"] or 3),
             "group_size": int(trip["group_size"] or 2),
-            "budget_text": trip["budget_text"] or "\u0441\u0440\u0435\u0434\u043d\u0438\u0439",
+            "budget_text": trip["budget_text"] or "\u0411\u0438\u0437\u043d\u0435\u0441",
             "interests_text": trip["interests_text"] or "\u0433\u043e\u0440\u043e\u0434, \u0435\u0434\u0430",
             "notes": trip["notes"] or "",
             "source_prompt": trip["source_prompt"] or "",
@@ -70,6 +70,7 @@ class TripService:
             request.destination,
             request.dates_text,
             request.origin,
+            group_size=request.group_size,
             context_text=context_text,
         )
 
@@ -105,6 +106,7 @@ class TripService:
             request.destination,
             request.dates_text,
             request.origin,
+            group_size=request.group_size,
             context_text=context_text,
         )
         return detected_needs, {
@@ -269,7 +271,7 @@ class TripService:
             dates_text=signal.dates_text or "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u044b",
             days_count=3,
             group_size=max(2, len(signal.participants_mentioned)) if signal.participants_mentioned else 2,
-            budget_text=signal.budget_hint or "\u0441\u0440\u0435\u0434\u043d\u0438\u0439",
+            budget_text=signal.budget_hint or "\u0411\u0438\u0437\u043d\u0435\u0441",
             interests_text=interests_text,
             notes=signal.raw_text,
             source_prompt=signal.raw_text,

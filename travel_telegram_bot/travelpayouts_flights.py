@@ -202,13 +202,10 @@ class TravelpayoutsFlightProvider:
         route_origin = origin_code.strip().upper()
         route_destination = destination_code.strip().upper()
         if one_way:
-            query_params = {
-                "origin": route_origin,
-                "destination": route_destination,
-            }
+            query_params = {"origin_iata": route_origin, "destination_iata": route_destination}
             if start_date:
                 query_params["depart_date"] = start_date
-            base_url = "https://www.aviasales.ru/search?" + urllib.parse.urlencode(query_params)
+            base_url = "https://www.aviasales.ru/?" + urllib.parse.urlencode(query_params)
         elif start_date and end_date:
             base_url = (
                 "https://www.aviasales.ru/search/"
@@ -216,7 +213,9 @@ class TravelpayoutsFlightProvider:
                 f"{route_destination}{end_date[8:10]}{end_date[5:7]}1"
             )
         else:
-            base_url = f"https://www.aviasales.ru/search/{route_origin}{route_destination}1"
+            base_url = "https://www.aviasales.ru/?" + urllib.parse.urlencode(
+                {"origin_iata": route_origin, "destination_iata": route_destination}
+            )
         if self._partner_links and self._partner_links.enabled:
             try:
                 return self._partner_links.convert(base_url, sub_id=f"{route_origin}-{route_destination}")
@@ -375,34 +374,39 @@ class TravelpayoutsFlightProvider:
     @staticmethod
     def _normalize_budget_level(budget_text: str) -> str:
         lowered = (budget_text or "").lower()
+        if any(phrase in lowered for phrase in ("первый класс", "first class", "не ограничен", "без ограничений", "без лимита")):
+            return "первый класс"
+        if any(phrase in lowered for phrase in ("бизнес", "business")):
+            return "бизнес"
         for label, keywords in BUDGET_HINTS.items():
             if any(keyword in lowered for keyword in keywords):
                 return label
         digits = [int(value) for value in "".join(ch if ch.isdigit() else " " for ch in lowered).split()]
         if digits:
             if digits[0] <= 40000:
-                return "\u044d\u043a\u043e\u043d\u043e\u043c"
+                return "эконом"
             if digits[0] >= 120000:
-                return "\u043a\u043e\u043c\u0444\u043e\u0440\u0442"
-        return "\u0441\u0440\u0435\u0434\u043d\u0438\u0439"
+                return "первый класс"
+            return "бизнес"
+        return "бизнес"
 
     @classmethod
     def _budget_fit_text(cls, price_per_person: int, budget_text: str) -> str:
         level = cls._normalize_budget_level(budget_text)
-        thresholds = {"\u044d\u043a\u043e\u043d\u043e\u043c": 18000, "\u0441\u0440\u0435\u0434\u043d\u0438\u0439": 32000, "\u043a\u043e\u043c\u0444\u043e\u0440\u0442": 55000}
+        thresholds = {"эконом": 18000, "бизнес": 40000, "первый класс": 75000}
         limit = thresholds[level]
         if price_per_person <= int(limit * 0.75):
-            return f"\u0445\u043e\u0440\u043e\u0448\u043e \u0432\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0432 {level} \u0431\u044e\u0434\u0436\u0435\u0442"
+            return f"хорошо вписывается в класс {level}"
         if price_per_person <= limit:
-            return f"\u0432\u043f\u0438\u0441\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0432 {level} \u0431\u044e\u0434\u0436\u0435\u0442"
+            return f"вписывается в класс {level}"
         if price_per_person <= int(limit * 1.25):
-            return f"\u043d\u0430 \u0433\u0440\u0430\u043d\u0438 \u0434\u043b\u044f {level} \u0431\u044e\u0434\u0436\u0435\u0442\u0430"
-        return f"\u0434\u043e\u0440\u043e\u0436\u0435 \u043e\u0436\u0438\u0434\u0430\u0435\u043c\u043e\u0433\u043e \u0434\u043b\u044f {level} \u0431\u044e\u0434\u0436\u0435\u0442\u0430"
+            return f"на грани для класса {level}"
+        return f"дороже ожидаемого для класса {level}"
 
     @classmethod
     def _score_offer(cls, price_per_person: int, changes: int, budget_text: str) -> int:
         level = cls._normalize_budget_level(budget_text)
-        thresholds = {"\u044d\u043a\u043e\u043d\u043e\u043c": 18000, "\u0441\u0440\u0435\u0434\u043d\u0438\u0439": 32000, "\u043a\u043e\u043c\u0444\u043e\u0440\u0442": 55000}
+        thresholds = {"эконом": 18000, "бизнес": 40000, "первый класс": 75000}
         limit = thresholds[level]
         score = 10
         if price_per_person > limit:

@@ -26,8 +26,8 @@ INTEREST_KEYWORDS: dict[str, list[str]] = {
 
 BUDGET_HINTS = {
     "эконом": ["эконом", "дешев", "бюджетно", "минимум", "недорого"],
-    "средний": ["средн", "нормальн", "баланс", "комфортно, но без люкса", "умеренн"],
-    "комфорт": ["комфорт", "премиум", "дорого", "красиво", "видовой отель", "хороший отель"],
+    "бизнес": ["бизнес", "business", "средн", "нормальн", "баланс", "умеренн", "комфорт"],
+    "первый класс": ["первый класс", "first class", "премиум", "люкс", "vip", "вип", "не ограничен", "без ограничений"],
 }
 
 
@@ -494,7 +494,7 @@ class TravelPlanner:
         destination = self._extract_destination(cleaned)
         if not destination:
             raise ValueError(
-                "Не смог понять направление. Напиши запрос так: '/plan Хочу на 5 дней во Владивосток, нас 4, бюджет средний, любим море и еду'."
+                "Не смог понять направление. Напиши запрос так: '/plan Хочу на 5 дней во Владивосток, нас 4, бюджет Бизнес, любим море и еду'."
             )
 
         days_count = self._extract_days_count(cleaned)
@@ -545,7 +545,7 @@ class TravelPlanner:
             dates_text=normalized_search_value(dates_text) or "не указаны",
             days_count=max(1, int(days_count or 3)),
             group_size=max(1, int(group_size or 2)),
-            budget_text=normalized_search_value(budget_text) or "средний",
+            budget_text=normalized_search_value(budget_text) or "бизнес",
             interests=interests,
             notes=(notes or "").strip(),
             source_prompt=(source_prompt or notes or f"Поездка в {destination_clean}").strip(),
@@ -750,7 +750,19 @@ class TravelPlanner:
                 "без лимита",
             )
         ):
-            return "не ограничен"
+            return "Первый класс"
+        if any(phrase in lowered for phrase in ("первый класс", "first class")):
+            return "Первый класс"
+        if any(phrase in lowered for phrase in ("бизнес", "business")):
+            return "Бизнес"
+        if any(phrase in lowered for phrase in ("эконом", "economy")):
+            return "Эконом"
+        exact_match = re.search(r"\bна\s+([\d\s]+)(?:\s*(?:руб|₽))?\b", lowered)
+        if exact_match:
+            return "на " + exact_match.group(1).strip() + " ₽"
+        from_match = re.search(r"\b(?:от|больше)\s+([\d\s]+)(?:\s*(?:руб|₽))?\b", lowered)
+        if from_match:
+            return "от " + from_match.group(1).strip() + " ₽"
         range_match = re.search(
             r"\b(?:бюджет|до|примерно|около)\s+([\d\s]+(?:к|тыс|тысяч|руб|₽|€|\$)?)",
             lowered,
@@ -759,8 +771,11 @@ class TravelPlanner:
             return range_match.group(0).strip()
         for label, keywords in BUDGET_HINTS.items():
             if any(keyword in lowered for keyword in keywords):
-                return label
-        return "средний"
+                return label.title() if label != "первый класс" else "Первый класс"
+        plain_number = re.search(r"\b(\d[\d\s]{3,})\b", lowered)
+        if plain_number:
+            return "около " + plain_number.group(1).strip() + " ₽"
+        return "Бизнес"
 
     def _extract_interests(self, text: str) -> list[str]:
         lowered = text.lower()
@@ -780,7 +795,7 @@ class TravelPlanner:
             phrase in lowered
             for phrase in ("не ограничен", "не ограничена", "не ограничены", "без ограничений", "любой бюджет", "без лимита")
         ):
-            return "комфорт"
+            return "первый класс"
         for label, keywords in BUDGET_HINTS.items():
             if any(keyword in lowered for keyword in keywords):
                 return label
@@ -790,8 +805,9 @@ class TravelPlanner:
             if first_value <= 40000:
                 return "эконом"
             if first_value >= 120000:
-                return "комфорт"
-        return "средний"
+                return "первый класс"
+            return "бизнес"
+        return "бизнес"
 
     def _build_context_text(
         self,
@@ -925,8 +941,8 @@ class TravelPlanner:
 
         multiplier = {
             "эконом": 0.85,
-            "средний": 1.0,
-            "комфорт": 1.35,
+            "бизнес": 1.1,
+            "первый класс": 1.5,
         }[budget_level]
 
         nights = max(1, request.days_count - 1)

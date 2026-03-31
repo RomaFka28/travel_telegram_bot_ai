@@ -60,6 +60,46 @@ SOURCE_LABELS = {
     "🚐 Kiwitaxi": "Kiwitaxi",
 }
 
+CITY_DEEPLINKS = {
+    "санкт-петербург": {
+        "ostrovok_path": "russia/st._petersburg",
+        "ostrovok_q": "2042",
+        "sutochno_host": "spb.sutochno.ru",
+        "yandex_path": "saint-petersburg",
+    },
+    "сочи": {
+        "ostrovok_path": "russia/sochi",
+        "sutochno_host": "sochi.sutochno.ru",
+        "yandex_path": "sochi",
+    },
+    "казань": {
+        "ostrovok_path": "russia/kazan",
+        "sutochno_host": "kazan.sutochno.ru",
+        "yandex_path": "kazan",
+    },
+    "калининград": {
+        "ostrovok_path": "russia/kaliningrad",
+        "sutochno_host": "kaliningrad.sutochno.ru",
+        "yandex_path": "kaliningrad",
+    },
+    "владивосток": {
+        "ostrovok_path": "russia/vladivostok",
+        "sutochno_host": "vladivostok.sutochno.ru",
+        "yandex_path": "vladivostok",
+    },
+    "стамбул": {
+        "ostrovok_path": "turkey/istanbul",
+        "yandex_path": "istanbul",
+    },
+}
+
+TRANSLIT_MAP = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e", "ж": "zh", "з": "z", "и": "i",
+    "й": "y", "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t",
+    "у": "u", "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "", "ы": "y", "ь": "",
+    "э": "e", "ю": "yu", "я": "ya",
+}
+
 
 def detect_link_needs(context_text: str) -> set[str]:
     lowered = (context_text or "").lower()
@@ -68,6 +108,41 @@ def detect_link_needs(context_text: str) -> set[str]:
         if any(keyword in lowered for keyword in keywords):
             needs.add(category)
     return needs
+
+
+def _transliterate_slug(value: str) -> str:
+    slug_parts: list[str] = []
+    for char in (value or "").lower():
+        if char.isascii() and char.isalnum():
+            slug_parts.append(char)
+        elif char in TRANSLIT_MAP:
+            slug_parts.append(TRANSLIT_MAP[char])
+        elif char in {" ", "-", "_", "."}:
+            slug_parts.append("-")
+    slug = "".join(slug_parts)
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-")
+
+
+def _format_ru_date(iso_date: str | None) -> str | None:
+    if not iso_date:
+        return None
+    year, month, day = iso_date.split("-")
+    return f"{day}.{month}.{year}"
+
+
+def _city_deeplink_data(destination: str) -> dict[str, str]:
+    normalized = normalized_search_value(destination)
+    if not normalized:
+        return {}
+    lowered = normalized.lower()
+    if lowered in CITY_DEEPLINKS:
+        return CITY_DEEPLINKS[lowered]
+    return {
+        "ostrovok_path": f"russia/{_transliterate_slug(normalized)}",
+        "yandex_path": _transliterate_slug(normalized),
+    }
 
 
 def _ticket_links(destination: str, origin: str, start_date: str | None, end_date: str | None) -> list[tuple[str, str]]:
@@ -94,11 +169,11 @@ def _ticket_links(destination: str, origin: str, start_date: str | None, end_dat
             + urllib.parse.urlencode({"origin": normalized_origin, "destination": normalized_destination})
         )
     else:
-        aviasales = "https://www.aviasales.ru/search?" + urllib.parse.urlencode({"destination": normalized_destination})
+        aviasales = "https://www.aviasales.ru"
     return [("✈️ Билеты", aviasales)]
 
 
-def _housing_links(destination: str, start_date: str | None, end_date: str | None) -> list[tuple[str, str]]:
+def _housing_links(destination: str, start_date: str | None, end_date: str | None, group_size: int = 2) -> list[tuple[str, str]]:
     normalized_destination = normalized_search_value(destination)
     if not normalized_destination:
         return []
@@ -106,33 +181,51 @@ def _housing_links(destination: str, start_date: str | None, end_date: str | Non
     locale = detect_route_locale(normalized_destination)
     ru_cis = locale.is_ru_cis_destination
     if ru_cis:
+        deeplink = _city_deeplink_data(normalized_destination)
+        ostrovok_path = deeplink.get("ostrovok_path")
+        ostrovok_q = deeplink.get("ostrovok_q")
+        sutochno_host = deeplink.get("sutochno_host")
+        yandex_path = deeplink.get("yandex_path")
+        checkin_ru = _format_ru_date(start_date)
+        checkout_ru = _format_ru_date(end_date)
         if start_date and end_date:
+            ostrovok_params = {
+                "dates": f"{checkin_ru}-{checkout_ru}",
+                "guests": str(max(1, group_size)),
+                "search": "yes",
+            }
+            if ostrovok_q:
+                ostrovok_params["q"] = ostrovok_q
             return [
                 (
                     "🏨 Островок",
-                    "https://ostrovok.ru/hotel/search/?"
-                    + urllib.parse.urlencode({"q": normalized_destination, "checkin": start_date, "checkout": end_date}),
-                ),
-                (
-                    "🏠 Суточно",
-                    "https://sutochno.ru/search?"
-                    + urllib.parse.urlencode({"q": normalized_destination, "datefrom": start_date, "dateto": end_date}),
+                    f"https://ostrovok.ru/hotel/{ostrovok_path}?" + urllib.parse.urlencode(ostrovok_params),
                 ),
                 (
                     "🧳 Яндекс Путешествия",
-                    "https://travel.yandex.ru/hotels/search?"
-                    + urllib.parse.urlencode({"where": normalized_destination, "checkinDate": start_date, "checkoutDate": end_date}),
+                    f"https://travel.yandex.ru/hotels/{yandex_path}/?"
+                    + urllib.parse.urlencode({"checkinDate": start_date, "checkoutDate": end_date, "adults": max(1, group_size)}),
                 ),
-            ]
+            ] + (
+                [
+                    (
+                        "🏠 Суточно",
+                        f"https://{sutochno_host}/?{urllib.parse.urlencode({'arrival': start_date, 'departure': end_date, 'guests': max(1, group_size)})}",
+                    )
+                ]
+                if sutochno_host
+                else []
+            )
 
-        encoded_destination = urllib.parse.quote(normalized_destination)
-        return [
-            ("🏨 Островок", f"https://ostrovok.ru/hotel/search/?q={encoded_destination}"),
-            ("🏠 Суточно", f"https://sutochno.ru/search?city={encoded_destination}"),
-            ("🧳 Яндекс Путешествия", f"https://travel.yandex.ru/hotels/search?where={encoded_destination}"),
-            ("🏘 Avito Путешествия", f"https://www.avito.ru/rossiya/kvartiry/sdam/posutochno?cd=1&q={encoded_destination}"),
-            ("🌲 Мир Турбаз", f"https://mirturbaz.ru/catalog/russia?search={encoded_destination}"),
+        results = [
+            ("🏨 Островок", f"https://ostrovok.ru/hotel/{ostrovok_path}/"),
+            ("🧳 Яндекс Путешествия", f"https://travel.yandex.ru/hotels/{yandex_path}/"),
+            ("🏘 Avito Путешествия", "https://www.avito.ru/rossiya/kvartiry/sdam/posutochno"),
+            ("🌲 Мир Турбаз", "https://mirturbaz.ru/catalog/russia"),
         ]
+        if sutochno_host:
+            results.insert(1, ("🏠 Суточно", f"https://{sutochno_host}/"))
+        return results
 
     booking_params = {"ss": normalized_destination}
     if start_date and end_date:
@@ -236,6 +329,7 @@ def build_links_map(
     dates_text: str,
     origin: str | None = None,
     *,
+    group_size: int = 2,
     context_text: str = "",
 ) -> dict[str, str]:
     normalized_destination = normalized_search_value(destination)
@@ -252,7 +346,7 @@ def build_links_map(
     if "tickets" in needs:
         link_items.extend(_ticket_links(normalized_destination, normalized_origin, start_date, end_date))
     if "housing" in needs:
-        link_items.extend(_housing_links(normalized_destination, start_date, end_date))
+        link_items.extend(_housing_links(normalized_destination, start_date, end_date, group_size))
     if "excursions" in needs:
         link_items.extend(_excursion_links(normalized_destination))
     if "road" in needs:
@@ -266,7 +360,7 @@ def build_links_map(
 
     if not link_items:
         link_items = _ticket_links(normalized_destination, normalized_origin, start_date, end_date) + _housing_links(
-            normalized_destination, start_date, end_date
+            normalized_destination, start_date, end_date, group_size
         )[:2]
 
     return dict(link_items)
@@ -277,6 +371,7 @@ def build_structured_link_results(
     dates_text: str,
     origin: str | None = None,
     *,
+    group_size: int = 2,
     context_text: str = "",
 ) -> dict[str, list[TravelSearchResult]]:
     normalized_destination = normalized_search_value(destination)
@@ -297,7 +392,7 @@ def build_structured_link_results(
         if ticket_links:
             category_links["tickets"] = ticket_links
     if "housing" in needs:
-        housing_links = _housing_links(normalized_destination, start_date, end_date)
+        housing_links = _housing_links(normalized_destination, start_date, end_date, group_size)
         if housing_links:
             category_links["housing"] = housing_links
     if "excursions" in needs:
@@ -343,9 +438,10 @@ def build_links_text(
     dates_text: str,
     origin: str | None = None,
     *,
+    group_size: int = 2,
     context_text: str = "",
 ) -> str:
-    links = build_links_map(destination, dates_text, origin, context_text=context_text)
+    links = build_links_map(destination, dates_text, origin, group_size=group_size, context_text=context_text)
     if not links:
         return ""
 

@@ -511,7 +511,7 @@ def test_summary_hides_stale_links_and_context_for_invalid_destination(tmp_path)
     assert "Санкт-Петербург, Россия" not in rendered
     assert "https://ostrovok.ru/hotel/search/?q=-" not in rendered
     assert "Куда: -" not in rendered
-    assert "Маршрут появится после того" in rendered
+    assert "Открывается отдельной кнопкой ниже." in rendered
 
 
 def test_group_chat_without_destination_asks_short_question(tmp_path) -> None:
@@ -545,8 +545,8 @@ def test_group_chat_updates_existing_trip_without_creating_new_one(tmp_path) -> 
     assert active_trip is not None
     assert int(active_trip["id"]) == original_trip_id
     assert active_trip["dates_text"] == "12–14 июня"
-    assert active_trip["budget_text"] == "комфорт"
-    assert "Откройте /summary" in message.replies[-1]["text"]
+    assert active_trip["budget_text"] == "Бизнес"
+    assert "Быстрый вывод" in message.replies[-1]["text"]
 
 
 def test_participants_progress_uses_known_chat_members(tmp_path) -> None:
@@ -615,7 +615,7 @@ def test_delete_trip_command_removes_archived_trip(tmp_path) -> None:
     asyncio.run(handlers.delete_trip_command(delete_update, DummyContext(args=[str(first_trip["id"])])))
 
     assert database.get_trip_by_id(int(first_trip["id"])) is None
-    assert "удалена навсегда" in delete_message.replies[-1]["text"].lower()
+    assert "удалена" in delete_message.replies[-1]["text"].lower()
 
 
 def test_summary_shows_entry_requirements_for_international_trip(tmp_path) -> None:

@@ -248,8 +248,9 @@ class TripFormatter:
 
     def build_status_options_text(self) -> str:
         return (
-            "Выберите свой статус участия, отредактируйте план или удалите поездку.\n\n"
-            "Доступно: ✅ Еду / 🤔 Интересно / ❌ Не еду"
+            "Выберите ваш ответ по поездке.\n\n"
+            "Здесь только статусы: ✅ Еду / 🤔 Думаю / ❌ Не еду.\n"
+            "Маршрут, изменение и удаление доступны в карточке поездки."
         )
 
     def build_trip_list_text(self, chat_id: int) -> str:
@@ -281,6 +282,17 @@ class TripFormatter:
 
     def build_group_clarifying_question(self) -> str:
         return "Похоже, вы обсуждаете поездку. Куда хотите поехать?"
+
+    def build_group_destination_vote_text(self, options: list[tuple[str, int]]) -> str:
+        if not options:
+            return "Вижу, что направление ещё не определилось. Напишите, какой город сейчас основной."
+        rendered = "\n".join(f"• {html.escape(name)} — {count} упомин." for name, count in options[:4])
+        return (
+            "Пока в чате спорят о направлении, поэтому маршрут ещё не собираю.\n\n"
+            "<b>Сейчас вижу такие варианты</b>\n"
+            f"{rendered}\n\n"
+            "Когда один вариант начнёт явно побеждать, соберу одну активную поездку для группы."
+        )
 
     def build_group_autodraft_reply(self, trip: dict) -> str:
         weather_text = (trip.get("weather_text") or "").strip()
@@ -409,9 +421,6 @@ class TripFormatter:
         budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
         interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
         has_destination = self._has_destination(trip)
-        itinerary_text = self._escape_block(
-            trip["itinerary_text"] if has_destination else "Маршрут появится после того, как станет понятно направление поездки."
-        )
         stay_preview = self._escape_block(
             self._preview_multiline(trip["stay_text"] or "", max_blocks=1)
             if has_destination
@@ -462,7 +471,7 @@ class TripFormatter:
             + short_block
             + "\n\n"
             f"<b>Коротко о направлении</b>\n{context_preview}\n\n"
-            f"<b>Маршрут</b>\n{itinerary_text}\n\n"
+            "<b>Маршрут</b>\nОткрывается отдельной кнопкой ниже.\n\n"
             f"<b>Где жить</b>\n{stay_preview}\n\n"
             f"<b>Ориентир по бюджету</b>\n{html.escape(trip['budget_total_text'] or 'не рассчитан')}\n\n"
             f"<b>Участники</b>\n"

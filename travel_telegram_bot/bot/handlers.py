@@ -20,6 +20,7 @@ from bot.keyboards import (
     trip_budget_keyboard,
     trip_days_keyboard,
     trip_group_size_keyboard,
+    trip_summary_keyboard,
     trips_list_keyboard,
     trip_skip_keyboard,
 )
@@ -145,9 +146,9 @@ class BotHandlers:
             "• если билет нужен только туда, напишите: «в одну сторону» или «без обратного билета»\n\n"
             "Пример:\n"
             "Хочу поехать с друзьями во Владивосток на 5 дней. Нас 4, вылет из Новосибирска, "
-            "туда 12 июня, обратно 16 июня, бюджет средний, любим море и еду.\n\n"
+            "туда 12 июня, обратно 16 июня, бюджет Эконом, любим море и еду.\n\n"
             "Пример в одну сторону:\n"
-            "Хочу в Стамбул один, вылет из Тбилиси 12 июня, билет в одну сторону, бюджет средний, "
+            "Хочу в Стамбул один, вылет из Тбилиси 12 июня, билет в одну сторону, бюджет Бизнес, "
             "интересуют прогулки и еда."
         )
 
@@ -189,7 +190,8 @@ class BotHandlers:
         await message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=participant_status_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id),
+            disable_web_page_preview=True,
         )
         return True
 
@@ -263,7 +265,7 @@ class BotHandlers:
             "dates_text": trip["dates_text"] or "не указаны",
             "days_count": int(trip["days_count"] or 3),
             "group_size": int(trip["group_size"] or 2),
-            "budget_text": trip["budget_text"] or "средний",
+            "budget_text": trip["budget_text"] or "Бизнес",
             "interests_text": trip["interests_text"] or "город, еда",
             "notes": trip["notes"] or "",
             "source_prompt": trip["source_prompt"] or "",
@@ -495,12 +497,12 @@ class BotHandlers:
             origin=trip["origin"] or "не указано",
             destination=trip["destination"] or "",
             dates_text=trip["dates_text"] or "не указаны",
-            budget_text=trip["budget_text"] or "средний",
+            budget_text=trip["budget_text"] or "Бизнес",
             group_size=int(trip["group_size"] or 1),
             source_text=f"{trip['source_prompt'] or ''}\n{trip['notes'] or ''}",
         )
         self.db.update_trip_fields(int(trip["id"]), {"tickets_text": tickets_text})
-        await update.effective_message.reply_text(tickets_text)
+        await update.effective_message.reply_text(tickets_text, disable_web_page_preview=True)
 
     async def hotels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
@@ -518,6 +520,7 @@ class BotHandlers:
         await message.reply_text(
             self.formatter.build_housing_search_text(trip, response),
             parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
         )
 
     async def trips_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -559,7 +562,8 @@ class BotHandlers:
         await message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=participant_status_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id),
+            disable_web_page_preview=True,
         )
 
     async def plan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -577,7 +581,7 @@ class BotHandlers:
         if not context.args:
             await update.effective_message.reply_text(
                 "Использование:\n"
-                "/planai Хочу поехать с друзьями на 5 дней во Владивосток, нас 4, из Новосибирска, бюджет средний, любим море и еду"
+                "/plan Хочу поехать с друзьями на 5 дней во Владивосток, нас 4, из Новосибирска, бюджет Бизнес, любим море и еду"
             )
             return
 
@@ -627,7 +631,8 @@ class BotHandlers:
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=participant_status_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id),
+            disable_web_page_preview=True,
         )
 
     async def new_trip_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -696,7 +701,7 @@ class BotHandlers:
             await update.effective_message.reply_text("Нужно число от 1 до 20. Например: 4")
             return NEW_TRIP_GROUP_SIZE
         context.user_data.setdefault("trip_draft", {})["group_size"] = group_size
-        await update.effective_message.reply_text("Какой бюджет? Например: эконом, средний, комфорт, до 80 000 на человека.")
+        await update.effective_message.reply_text("Какой бюджет? Например: Эконом, Бизнес, Первый класс, до 80 000 или на 50 000.")
         await update.effective_message.reply_text(
             "Можно выбрать готовый вариант кнопкой.",
             reply_markup=trip_budget_keyboard(),
@@ -735,7 +740,7 @@ class BotHandlers:
                 dates_text=draft.get("dates_text", "не указаны"),
                 days_count=int(draft.get("days_count", 3)),
                 group_size=int(draft.get("group_size", 2)),
-                budget_text=draft.get("budget_text", "средний"),
+                budget_text=draft.get("budget_text", "Бизнес"),
                 interests_text=draft.get("interests_text", "город, еда"),
                 notes=notes,
                 source_prompt=f"Новый бриф: {draft.get('destination', '')}, {draft.get('days_count', 3)} дн.",
@@ -767,7 +772,8 @@ class BotHandlers:
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=participant_status_keyboard(trip_id),
+            reply_markup=trip_summary_keyboard(trip_id),
+            disable_web_page_preview=True,
         )
         await update.effective_message.reply_text(
             "Мастер завершён.",
@@ -793,7 +799,8 @@ class BotHandlers:
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(int(trip["id"])),
             parse_mode=ParseMode.HTML,
-            reply_markup=participant_status_keyboard(int(trip["id"])),
+            reply_markup=trip_summary_keyboard(int(trip["id"])),
+            disable_web_page_preview=True,
         )
 
     async def brief_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -934,7 +941,8 @@ class BotHandlers:
         await message.reply_text(
             self.formatter._build_summary_html(int(trip_id)),
             parse_mode=ParseMode.HTML,
-            reply_markup=participant_status_keyboard(int(trip_id)),
+            reply_markup=trip_summary_keyboard(int(trip_id)),
+            disable_web_page_preview=True,
         )
         self._log_trip_action(
             "edit_success",
@@ -980,7 +988,12 @@ class BotHandlers:
         user = update.effective_user
 
         if not signal.destination:
-            if self._should_send_group_reply(context, "last_clarify_reply", cooldown_seconds=600):
+            if signal.destination_votes and self._should_send_group_reply(context, "last_destination_vote_reply", cooldown_seconds=600):
+                await message.reply_text(
+                    self.formatter.build_group_destination_vote_text(signal.destination_votes),
+                    parse_mode=ParseMode.HTML,
+                )
+            elif self._should_send_group_reply(context, "last_clarify_reply", cooldown_seconds=600):
                 await message.reply_text(self.formatter.build_group_clarifying_question())
             return
 
@@ -1012,6 +1025,7 @@ class BotHandlers:
                             await message.reply_text(
                                 self.formatter.build_group_autodraft_reply(refreshed_trip),
                                 parse_mode=ParseMode.HTML,
+                                disable_web_page_preview=True,
                             )
             return
 
@@ -1029,6 +1043,7 @@ class BotHandlers:
                 await message.reply_text(
                     self.formatter.build_group_autodraft_reply(trip),
                     parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
                 )
 
     async def trip_action_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1075,7 +1090,8 @@ class BotHandlers:
                         await query.message.reply_text(
                             self.formatter._build_summary_html(trip_id),
                             parse_mode=ParseMode.HTML,
-                            reply_markup=participant_status_keyboard(trip_id),
+                            reply_markup=trip_summary_keyboard(trip_id),
+                            disable_web_page_preview=True,
                         )
                     await query.answer("Поездка открыта.")
                     return
@@ -1096,7 +1112,8 @@ class BotHandlers:
                             await query.edit_message_text(
                                 text=self.formatter._build_summary_html(trip_id),
                                 parse_mode=ParseMode.HTML,
-                                reply_markup=participant_status_keyboard(trip_id),
+                                reply_markup=trip_summary_keyboard(trip_id),
+                                disable_web_page_preview=True,
                             )
                         else:
                             await query.edit_message_text("Удаление отменено. Откройте /trips, чтобы продолжить работу с архивом.")
@@ -1104,12 +1121,31 @@ class BotHandlers:
                     return
 
                 if action == "delete_now":
-                    deleted = self.db.delete_trip(int(trip["chat_id"]), trip_id)
+                    chat_id = int(trip["chat_id"])
+                    deleted = self.db.delete_trip(chat_id, trip_id)
                     if not deleted:
                         await query.answer("Не удалось удалить поездку.", show_alert=True)
                         return
                     if query.message:
-                        await query.edit_message_text("Поездка удалена навсегда.")
+                        remaining_trips = self.db.list_trips(chat_id)
+                        if trip["status"] == "active" and remaining_trips:
+                            next_trip_id = int(remaining_trips[0]["id"])
+                            self.db.activate_trip(chat_id, next_trip_id)
+                            await query.edit_message_text("Поездку удалил. Ниже открыл следующую доступную поездку.")
+                            await query.message.reply_text(
+                                self.formatter._build_summary_html(next_trip_id),
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=trip_summary_keyboard(next_trip_id),
+                                disable_web_page_preview=True,
+                            )
+                        elif remaining_trips:
+                            await query.edit_message_text(
+                                self.formatter.build_trip_list_text(chat_id),
+                                parse_mode=ParseMode.HTML,
+                                reply_markup=trips_list_keyboard(remaining_trips),
+                            )
+                        else:
+                            await query.edit_message_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
                     await query.answer("Поездка удалена.")
                     return
 
@@ -1124,7 +1160,8 @@ class BotHandlers:
                     await query.edit_message_text(
                         text=self.formatter._build_summary_html(trip_id),
                         parse_mode=ParseMode.HTML,
-                        reply_markup=participant_status_keyboard(trip_id),
+                        reply_markup=trip_summary_keyboard(trip_id),
+                        disable_web_page_preview=True,
                     )
                 self._log_trip_action(
                     "success",
@@ -1142,6 +1179,7 @@ class BotHandlers:
                     await query.message.reply_text(
                         self.formatter.build_route_section_text(trip_id),
                         parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
                     )
                 return
 
@@ -1151,6 +1189,7 @@ class BotHandlers:
                     await query.message.reply_text(
                         self.formatter.build_tickets_section_text(trip_id),
                         parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
                     )
                 return
 
@@ -1160,6 +1199,7 @@ class BotHandlers:
                     await query.message.reply_text(
                         self.formatter.build_housing_section_text(trip_id),
                         parse_mode=ParseMode.HTML,
+                        disable_web_page_preview=True,
                     )
                 return
 
@@ -1356,7 +1396,19 @@ class BotHandlers:
 
         deleted = self.db.delete_trip(chat.id, trip_id)
         if deleted:
-            await message.reply_text(f"Поездка {trip_id} удалена навсегда.")
+            remaining_trips = self.db.list_trips(chat.id)
+            if remaining_trips:
+                next_trip_id = int(remaining_trips[0]["id"])
+                self.db.activate_trip(chat.id, next_trip_id)
+                await message.reply_text("Поездку удалил. Ниже открыл следующую доступную поездку.")
+                await message.reply_text(
+                    self.formatter._build_summary_html(next_trip_id),
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=trip_summary_keyboard(next_trip_id),
+                    disable_web_page_preview=True,
+                )
+            else:
+                await message.reply_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
         else:
             await message.reply_text("Не удалось удалить поездку. Проверьте ID через /trips.")
 

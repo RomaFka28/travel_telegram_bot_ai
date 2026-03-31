@@ -42,6 +42,7 @@ class LinkOnlyHousingSearchProvider:
             normalized_destination,
             dates_text,
             origin=None,
+            group_size=group_size,
             context_text="жилье отель квартира суточно турбаза",
         )
         stay_style = "апартаменты / дом" if group_size >= 4 else "отель или студия"
@@ -88,8 +89,14 @@ class PlaywrightHousingSearchProvider:
             browser = await playwright.chromium.launch(headless=True)
             page = await browser.new_page()
             try:
+                fallback = await LinkOnlyHousingSearchProvider().search(
+                    destination=normalized_destination,
+                    dates_text=dates_text,
+                    group_size=group_size,
+                )
+                test_url = fallback.results[0].url if fallback.results else "https://ostrovok.ru/"
                 await page.goto(
-                    f"https://ostrovok.ru/hotel/search/?q={normalized_destination}",
+                    test_url,
                     wait_until="domcontentloaded",
                     timeout=self._timeout_ms,
                 )

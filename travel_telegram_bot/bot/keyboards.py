@@ -4,13 +4,13 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
 
 
 STATUS_LABELS = {
-    "interested": "🤔 Интересно",
+    "interested": "🤔 Думаю",
     "going": "✅ Еду",
     "not_going": "❌ Не еду",
 }
 
 
-def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
+def trip_summary_keyboard(trip_id: int) -> InlineKeyboardMarkup:
     buttons = [
         [
             InlineKeyboardButton(text="✅ Еду", callback_data=f"tripaction:{trip_id}:going"),
@@ -19,8 +19,6 @@ def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(text="🗺 Маршрут", callback_data=f"tripaction:{trip_id}:show_route"),
-            InlineKeyboardButton(text="🎫 Билеты", callback_data=f"tripaction:{trip_id}:show_tickets"),
-            InlineKeyboardButton(text="🏨 Жильё", callback_data=f"tripaction:{trip_id}:show_housing"),
         ],
         [
             InlineKeyboardButton(text="✏️ Изменить", callback_data=f"tripaction:{trip_id}:edit"),
@@ -28,6 +26,18 @@ def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
         ],
     ]
     return InlineKeyboardMarkup(buttons)
+
+
+def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(text="✅ Еду", callback_data=f"tripaction:{trip_id}:going"),
+                InlineKeyboardButton(text="🤔 Думаю", callback_data=f"tripaction:{trip_id}:interested"),
+                InlineKeyboardButton(text="❌ Не еду", callback_data=f"tripaction:{trip_id}:not_going"),
+            ]
+        ]
+    )
 
 
 def trip_delete_confirm_keyboard(trip_id: int) -> InlineKeyboardMarkup:
@@ -103,8 +113,8 @@ def trip_group_size_keyboard() -> ReplyKeyboardMarkup:
 def trip_budget_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
-            [KeyboardButton(text="эконом"), KeyboardButton(text="средний"), KeyboardButton(text="комфорт")],
-            [KeyboardButton(text="до 50 000"), KeyboardButton(text="до 80 000")],
+            [KeyboardButton(text="Эконом"), KeyboardButton(text="Бизнес"), KeyboardButton(text="Первый класс")],
+            [KeyboardButton(text="до 50 000"), KeyboardButton(text="на 50 000"), KeyboardButton(text="от 50 000")],
         ],
         resize_keyboard=True,
         one_time_keyboard=True,
