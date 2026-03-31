@@ -65,21 +65,38 @@ class TripFormatter:
             "rental_results": "Аренда",
         }.get(key, key)
 
+    @staticmethod
+    def _clean_result_title(result_title: str, category_title: str) -> str:
+        raw = (result_title or "").strip()
+        prefix = f"{category_title}:"
+        if raw.startswith(prefix):
+            raw = raw[len(prefix):].strip()
+        return raw or category_title
+
+    @staticmethod
+    def _display_result_hint(result) -> str:
+        price_text = (result.price_text or "").strip()
+        if not price_text:
+            return ""
+        lowered = price_text.lower()
+        if "откройте ссылку" in lowered:
+            return "Актуальные варианты и цены по ссылке"
+        return price_text
+
     def _category_section(self, trip: dict, column: str) -> str:
         results = deserialize_results(trip.get(column))
         if not results:
             return ""
-        lines = [f"<b>{self._category_title(column)}</b>"]
+        category_title = self._category_title(column)
+        lines = [f"<b>{category_title}</b>"]
         for result in results[:3]:
-            detail_parts = [html.escape(result.title)]
-            if result.price_text:
-                detail_parts.append(html.escape(result.price_text))
-            if result.budget_fit:
-                detail_parts.append(html.escape(result.budget_fit))
-            if result.note:
-                detail_parts.append(html.escape(result.note))
-            lines.append("• " + " — ".join(detail_parts))
-            lines.append(html.escape(result.url))
+            clean_title = self._clean_result_title(result.title, category_title)
+            link_url = html.escape(result.url, quote=True)
+            lines.append(f"• <b>{html.escape(clean_title)}</b> — <a href=\"{link_url}\">открыть</a>")
+            hint = self._display_result_hint(result)
+            extra_parts = [html.escape(part) for part in (hint, result.budget_fit, result.note) if part]
+            if extra_parts:
+                lines.append("  " + " — ".join(extra_parts))
         return "\n".join(lines)
 
     def _detected_needs_line(self, trip: dict) -> str:
@@ -228,8 +245,10 @@ class TripFormatter:
         return "<b>Статусы участников</b>\n" + "\n".join(self._participant_lines(trip_id))
 
     def build_status_options_text(self) -> str:
-        options = " / ".join(STATUS_LABELS[status] for status in ("going", "interested", "not_going"))
-        return f"Выберите свой ответ по поездке или передайте его командой. Доступно: {options}."
+        return (
+            "Выберите свой статус участия, отредактируйте план или удалите поездку.\n\n"
+            "Доступно: ✅ Еду / 🤔 Интересно / ❌ Не еду"
+        )
 
     def build_trip_list_text(self, chat_id: int) -> str:
         trips = self._db.list_trips(chat_id)
@@ -249,11 +268,13 @@ class TripFormatter:
         lines.append("Можно открыть поездку или удалить её кнопками ниже.")
         return "\n".join(lines)
 
-    @staticmethod
-    def build_trip_delete_confirm_text(trip: dict) -> str:
+    def build_trip_delete_confirm_text(self, trip: dict) -> str:
+        destination = html.escape(normalized_search_value(trip.get("destination")) or "без направления")
+        dates = html.escape(normalized_search_value(trip.get("dates_text")) or "даты не указаны")
         return (
             f"Удалить поездку <b>{html.escape(trip['title'])}</b> навсегда?\n"
-            "Это действие удалит её из активных и из архива без возможности восстановления."
+            f"📍 {destination}, {dates}\n\n"
+            "Это действие удалит её из истории и активных без возможности восстановления."
         )
 
     def build_group_clarifying_question(self) -> str:
@@ -309,10 +330,11 @@ class TripFormatter:
             lines.append("")
             lines.append("<b>Что открыть</b>")
             for result in response.results[:5]:
+                link_url = html.escape(result.url, quote=True)
                 lines.append(
-                    f"• <b>{html.escape(result.source)}</b>: {html.escape(result.title)}\n"
-                    f"  {html.escape(result.price_text)}\n"
-                    f"  {html.escape(result.url)}"
+                    f"• <b>{html.escape(result.source)}</b> — <a href=\"{link_url}\">открыть</a>\n"
+                    f"  {html.escape(self._clean_result_title(result.title, 'Жильё'))}\n"
+                    f"  {html.escape(self._display_result_hint(result))}"
                 )
         else:
             lines.append("")
