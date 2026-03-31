@@ -16,6 +16,7 @@ from bot.keyboards import (
     date_vote_keyboard,
     language_keyboard,
     participant_status_keyboard,
+    route_section_keyboard,
     settings_keyboard,
     trip_delete_confirm_keyboard,
     trip_budget_keyboard,
@@ -1233,6 +1234,18 @@ class BotHandlers:
                     await query.message.reply_text(
                         self.formatter.build_route_section_text(trip_id),
                         parse_mode=ParseMode.HTML,
+                        reply_markup=route_section_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
+                        disable_web_page_preview=True,
+                    )
+                return
+
+            if action == "show_summary":
+                await query.answer()
+                if query.message:
+                    await query.edit_message_text(
+                        text=self.formatter._build_summary_html(trip_id),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=trip_summary_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
                         disable_web_page_preview=True,
                     )
                 return

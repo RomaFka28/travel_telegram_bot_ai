@@ -40,6 +40,12 @@ def participant_status_keyboard(trip_id: int, language_code: str = "ru") -> Inli
     )
 
 
+def route_section_keyboard(trip_id: int, language_code: str = "ru") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(text=tr(language_code, "button_back_to_card"), callback_data=f"tripaction:{trip_id}:show_summary")]]
+    )
+
+
 def trip_delete_confirm_keyboard(trip_id: int, language_code: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
