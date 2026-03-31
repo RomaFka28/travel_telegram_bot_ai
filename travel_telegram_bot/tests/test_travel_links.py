@@ -1,4 +1,4 @@
-from travel_links import build_links_text
+from travel_links import build_links_map, build_links_text
 
 
 def test_build_links_text_includes_russian_sources() -> None:
@@ -30,3 +30,14 @@ def test_build_links_text_only_shows_relevant_categories_from_chat() -> None:
     assert "аренда+авто" in lowered
     assert "ostrovok" not in lowered
     assert "tutu" not in lowered
+
+
+def test_build_links_map_skips_placeholder_destination() -> None:
+    links = build_links_map(
+        "-",
+        "12-14 июня",
+        "Томск",
+        context_text="нужно жильё и билеты",
+    )
+
+    assert links == {}

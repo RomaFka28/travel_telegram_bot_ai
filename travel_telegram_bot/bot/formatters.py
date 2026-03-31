@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 
@@ -6,6 +6,7 @@ from bot.keyboards import STATUS_LABELS
 from database import Database
 from housing_search import HousingSearchResponse
 from travel_result_models import deserialize_needs, deserialize_results
+from value_normalization import normalized_search_value
 
 
 class TripFormatter:
@@ -134,8 +135,7 @@ class TripFormatter:
             "• хранит активную поездку и историю\n\n"
             "<b>Ограничения</b>\n"
             "• бот не бронирует билеты и жильё\n"
-            "• цены смотрятся по ссылкам на внешних сайтах\n"
-            "• для чтения обычных сообщений в группе нужен выключенный privacy mode в BotFather"
+            "• цены смотрятся по ссылкам на внешних сайтах"
         )
 
     def build_settings_text(self, chat_id: int) -> str:
@@ -158,10 +158,15 @@ class TripFormatter:
             "Если хотите только ручной режим через команды, выключите этот флаг."
         )
 
-    def build_trip_created_text(self, *, replaced_trip: bool) -> str:
+    def build_trip_created_text(self, *, replaced_trip: bool, chat_type: str | None = None) -> str:
+        is_group = chat_type in {"group", "supergroup"}
         if replaced_trip:
+            if is_group:
+                return "Собрал новый план и сделал его активным для этой группы. Предыдущий сохранён в истории."
             return "Собрал новый план и сделал его активным. Предыдущий сохранён в истории."
-        return "Собрал новый план для этого чата."
+        if is_group:
+            return "Собрал новый план для этой группы."
+        return "Собрал новый план."
 
     def build_status_updated_text(self, status: str) -> str:
         mapping = {
@@ -186,10 +191,11 @@ class TripFormatter:
         lines = ["<b>Поездки этого чата</b>"]
         for trip in trips[:10]:
             badge = "🟢 active" if trip["status"] == "active" else "📦 archived"
-            destination = html.escape(trip["destination"] or "без направления")
+            destination = html.escape(normalized_search_value(trip["destination"]) or "без направления")
+            dates_text = html.escape(normalized_search_value(trip["dates_text"]) or "без дат")
             lines.append(
                 f"• <b>{int(trip['id'])}</b> — {html.escape(trip['title'])} [{badge}]"
-                f"\n  {destination}, {html.escape(trip['dates_text'] or 'без дат')}"
+                f"\n  {destination}, {dates_text}"
             )
         lines.append("")
         lines.append("Чтобы сделать поездку активной, используйте <code>/select_trip ID</code>.")
@@ -202,6 +208,9 @@ class TripFormatter:
         weather_text = (trip.get("weather_text") or "").strip()
         summary_short = (trip.get("summary_short_text") or "").strip()
         open_questions = (trip.get("open_questions_text") or "").strip()
+        destination = normalized_search_value(trip.get("destination")) or "не указано"
+        dates_text = normalized_search_value(trip.get("dates_text")) or "уточняется"
+        budget_text = normalized_search_value(trip.get("budget_text")) or "не указан"
         sections = [
             self._category_section(trip, "flight_results"),
             self._category_section(trip, "housing_results"),
@@ -213,10 +222,10 @@ class TripFormatter:
         compact_sections = "\n\n".join(visible_sections[:4])
         return (
             f"🧭 Собрал черновик поездки\n"
-            f"Куда: <b>{html.escape(trip['destination'] or 'не указано')}</b>\n"
-            f"Когда: <b>{html.escape(trip['dates_text'] or 'уточняется')}</b>\n"
+            f"Куда: <b>{html.escape(destination)}</b>\n"
+            f"Когда: <b>{html.escape(dates_text)}</b>\n"
             f"Людей: <b>{int(trip['group_size'] or 0)}</b>\n"
-            f"Бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
+            f"Бюджет: <b>{html.escape(budget_text)}</b>\n"
             + self._detected_needs_line(trip)
             + (f"\n\n<b>Коротко</b>\n{html.escape(summary_short)}" if summary_short else "")
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
@@ -226,8 +235,9 @@ class TripFormatter:
         )
 
     def build_housing_search_text(self, trip: dict, response: HousingSearchResponse) -> str:
+        destination = normalized_search_value(trip["destination"]) or "поездки"
         lines = [
-            f"<b>Жильё для {html.escape(trip['destination'] or 'поездки')}</b>",
+            f"<b>Жильё для {html.escape(destination)}</b>",
             html.escape(response.summary),
         ]
         if response.results:
@@ -248,15 +258,20 @@ class TripFormatter:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
             return "<b>Поездка не найдена.</b>"
+        destination = normalized_search_value(trip["destination"]) or "не указано"
+        origin = normalized_search_value(trip["origin"]) or "не указано"
+        dates_text = normalized_search_value(trip["dates_text"]) or "не указаны"
+        budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
+        interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
         lines = [
             f"<b>🧾 {html.escape(trip['title'])}</b>",
-            f"📍 Направление: <b>{html.escape(trip['destination'] or 'не указано')}</b>",
-            f"🛫 Откуда: <b>{html.escape(trip['origin'] or 'не указано')}</b>",
-            f"📅 Даты: <b>{html.escape(trip['dates_text'] or 'не указаны')}</b>",
+            f"📍 Направление: <b>{html.escape(destination)}</b>",
+            f"🛫 Откуда: <b>{html.escape(origin)}</b>",
+            f"📅 Даты: <b>{html.escape(dates_text)}</b>",
             f"⏱ Длительность: <b>{int(trip['days_count'] or 0)} дн.</b>",
             f"👥 Размер группы: <b>{int(trip['group_size'] or 0)} чел.</b>",
-            f"💸 Бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>",
-            f"🎯 Интересы: <b>{html.escape(trip['interests_text'] or 'не указаны')}</b>",
+            f"💸 Бюджет: <b>{html.escape(budget_text)}</b>",
+            f"🎯 Интересы: <b>{html.escape(interests_text)}</b>",
         ]
         if trip["source_prompt"]:
             lines.append("")
@@ -269,7 +284,12 @@ class TripFormatter:
         if not trip:
             return "<b>Поездка не найдена.</b>"
 
-        itinerary_preview = self._escape_block(self._preview_multiline(trip["itinerary_text"] or "", max_blocks=1))
+        destination = normalized_search_value(trip["destination"]) or "не указано"
+        origin = normalized_search_value(trip["origin"]) or "не указано"
+        dates_text = normalized_search_value(trip["dates_text"]) or "не указаны"
+        budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
+        interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
+        itinerary_text = self._escape_block(trip["itinerary_text"] or "Маршрут пока не собран.")
         stay_preview = self._escape_block(self._preview_multiline(trip["stay_text"] or "", max_blocks=1))
         context_preview = self._escape_block(self._preview_multiline(trip["context_text"] or "", max_blocks=1))
         notes_text = self._escape_block(trip["notes"] or "—")
@@ -292,18 +312,18 @@ class TripFormatter:
 
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
-            f"📍 Направление: <b>{html.escape(trip['destination'] or 'не указано')}</b>\n"
-            f"🛫 Откуда: <b>{html.escape(trip['origin'] or 'не указано')}</b>\n"
-            f"📅 Даты: <b>{html.escape(trip['dates_text'] or 'не указаны')}</b> · <b>{int(trip['days_count'] or 0)} дн.</b>\n"
+            f"📍 Направление: <b>{html.escape(destination)}</b>\n"
+            f"🛫 Откуда: <b>{html.escape(origin)}</b>\n"
+            f"📅 Даты: <b>{html.escape(dates_text)}</b> · <b>{int(trip['days_count'] or 0)} дн.</b>\n"
             f"👥 Группа: <b>{int(trip['group_size'] or 0)} чел.</b>\n"
-            f"💸 Целевой бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
-            f"🎯 Интересы: <b>{html.escape(trip['interests_text'] or 'не указаны')}</b>"
+            f"💸 Целевой бюджет: <b>{html.escape(budget_text)}</b>\n"
+            f"🎯 Интересы: <b>{html.escape(interests_text)}</b>"
             + self._detected_needs_line(trip)
             + "\n"
             + short_block
             + "\n\n"
             f"<b>Коротко о направлении</b>\n{context_preview}\n\n"
-            f"<b>Маршрут</b>\n{itinerary_preview}\n\n"
+            f"<b>Маршрут</b>\n{itinerary_text}\n\n"
             f"<b>Где жить</b>\n{stay_preview}\n\n"
             f"<b>Ориентир по бюджету</b>\n{html.escape(trip['budget_total_text'] or 'не рассчитан')}\n\n"
             f"<b>Участники</b>\n"

@@ -62,6 +62,7 @@ def make_update(
     *,
     text: str = "",
     chat_id: int = 100,
+    chat_type: str = "group",
     user_id: int = 1,
     username: str = "user1",
     first_name: str = "Test",
@@ -76,14 +77,14 @@ def make_update(
     )
     update = SimpleNamespace(
         effective_message=message,
-        effective_chat=SimpleNamespace(id=chat_id),
+        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
         effective_user=user,
         callback_query=None,
     )
     return update, message
 
 
-def make_callback_update(*, data: str, chat_id: int = 100, user_id: int = 1, username: str = "user1"):
+def make_callback_update(*, data: str, chat_id: int = 100, chat_type: str = "group", user_id: int = 1, username: str = "user1"):
     message = DummyMessage()
     user = SimpleNamespace(
         id=user_id,
@@ -94,7 +95,7 @@ def make_callback_update(*, data: str, chat_id: int = 100, user_id: int = 1, use
     query = DummyCallbackQuery(data=data, user=user, message=message)
     update = SimpleNamespace(
         effective_message=message,
-        effective_chat=SimpleNamespace(id=chat_id),
+        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
         effective_user=user,
         callback_query=query,
     )
@@ -153,7 +154,7 @@ def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
     assert active_trip["destination"] == "Сочи"
     assert len(all_trips) == 2
     assert any(trip["status"] == "archived" for trip in all_trips)
-    assert "История сохранена" in second_message.replies[0]["text"]
+    assert "Предыдущий сохранён в истории" in second_message.replies[0]["text"]
     assert "Сочи" in second_message.replies[1]["text"]
     assert "Казань" in first_message.replies[1]["text"]
 
@@ -182,6 +183,22 @@ def test_newtrip_flow_creates_trip(tmp_path) -> None:
     assert trip["destination"] == "Владивосток"
     assert trip["group_size"] == 4
     assert trip["notes"] == "купить билеты до пятницы"
+
+
+def test_newtrip_restarts_from_first_step_when_called_again(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+
+    first_update, first_message = make_update(chat_id=778, chat_type="private")
+    asyncio.run(handlers.new_trip_start(first_update, context))
+    assert "Как назвать поездку?" in first_message.replies[-1]["text"]
+
+    context.user_data["trip_draft"] = {"destination": "Казань"}
+    second_update, second_message = make_update(chat_id=778, chat_type="private")
+    asyncio.run(handlers.new_trip_start(second_update, context))
+
+    assert context.user_data["trip_draft"] == {}
+    assert "Как назвать поездку?" in second_message.replies[-1]["text"]
 
 
 def test_status_command_and_participants_summary_cover_all_statuses(tmp_path) -> None:
@@ -278,6 +295,20 @@ def test_hotels_command_returns_russian_housing_sources(tmp_path) -> None:
     assert "Яндекс Путешествия" in hotels_message.replies[-1]["text"]
 
 
+def test_plan_command_in_private_chat_uses_private_wording(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    update, message = make_update(
+        chat_id=4060,
+        chat_type="private",
+    )
+    context = DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])
+
+    asyncio.run(handlers.plan_command(update, context))
+
+    assert "для этой группы" not in message.replies[0]["text"].lower()
+    assert "собрал новый план" in message.replies[0]["text"].lower()
+
+
 def test_tickets_command_returns_travelpayouts_snapshot(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     handlers.flight_provider = FakeFlightProvider()
@@ -356,6 +387,21 @@ def test_summary_only_shows_detected_categories(tmp_path) -> None:
     assert "Жильё" in rendered
     assert "Экскурсии" in rendered
     assert "Открытые вопросы" in rendered
+
+
+def test_summary_shows_full_multiday_itinerary(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(chat_id=520)
+    create_context = DummyContext(args=["Хочу", "в", "Казань", "на", "5", "дней"])
+    asyncio.run(handlers.plan_command(create_update, create_context))
+
+    summary_update, summary_message = make_update(chat_id=520)
+    asyncio.run(handlers.summary_command(summary_update, DummyContext()))
+
+    rendered = summary_message.replies[-1]["text"]
+    assert "День 1." in rendered
+    assert "День 2." in rendered
+    assert "День 3." in rendered
 
 
 def test_group_chat_without_destination_asks_short_question(tmp_path) -> None:

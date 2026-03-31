@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import html
 import logging
@@ -524,7 +524,12 @@ class BotHandlers:
         self.db.set_selected_trip(chat.id, trip_id)
         self.service._refresh_weather_for_trip(trip_id)
 
-        await update.effective_message.reply_text(self.formatter.build_trip_created_text(replaced_trip=replaced_trip))
+        await update.effective_message.reply_text(
+            self.formatter.build_trip_created_text(
+                replaced_trip=replaced_trip,
+                chat_type=getattr(update.effective_chat, "type", None),
+            )
+        )
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
@@ -576,7 +581,12 @@ class BotHandlers:
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
         self.db.set_selected_trip(chat.id, trip_id)
         self.service._refresh_weather_for_trip(trip_id)
-        await update.effective_message.reply_text(self.formatter.build_trip_created_text(replaced_trip=replaced_trip))
+        await update.effective_message.reply_text(
+            self.formatter.build_trip_created_text(
+                replaced_trip=replaced_trip,
+                chat_type=getattr(update.effective_chat, "type", None),
+            )
+        )
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
@@ -585,7 +595,11 @@ class BotHandlers:
 
     async def new_trip_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data["trip_draft"] = {}
-        await update.effective_message.reply_text("Как назвать поездку? Можно отправить '-' и я сгенерирую название автоматически.")
+        self._remember_chat_member(update)
+        await update.effective_message.reply_text(
+            "Как назвать поездку? Можно отправить '-' и я сгенерирую название автоматически.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return NEW_TRIP_TITLE
 
     async def new_trip_title(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -707,7 +721,12 @@ class BotHandlers:
         self.service._refresh_weather_for_trip(trip_id)
         context.user_data.pop("trip_draft", None)
 
-        await update.effective_message.reply_text(self.formatter.build_trip_created_text(replaced_trip=replaced_trip))
+        await update.effective_message.reply_text(
+            self.formatter.build_trip_created_text(
+                replaced_trip=replaced_trip,
+                chat_type=getattr(update.effective_chat, "type", None),
+            )
+        )
         await update.effective_message.reply_text(
             self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,

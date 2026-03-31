@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from travel_links import build_structured_link_results
+from value_normalization import normalized_search_value
 
 
 @dataclass(slots=True)
@@ -29,8 +30,16 @@ class HousingSearchProvider(Protocol):
 
 class LinkOnlyHousingSearchProvider:
     async def search(self, *, destination: str, dates_text: str, group_size: int) -> HousingSearchResponse:
+        normalized_destination = normalized_search_value(destination)
+        if not normalized_destination:
+            return HousingSearchResponse(
+                mode="links_only",
+                summary="Сначала нужно уточнить направление поездки, чтобы собрать ссылки по жилью без битых результатов.",
+                results=[],
+            )
+
         structured = build_structured_link_results(
-            destination,
+            normalized_destination,
             dates_text,
             origin=None,
             context_text="жилье отель квартира суточно турбаза",
@@ -62,23 +71,25 @@ class PlaywrightHousingSearchProvider:
         self._timeout_ms = timeout_ms
 
     async def search(self, *, destination: str, dates_text: str, group_size: int) -> HousingSearchResponse:
+        normalized_destination = normalized_search_value(destination)
+        if not normalized_destination:
+            fallback = LinkOnlyHousingSearchProvider()
+            return await fallback.search(destination=destination, dates_text=dates_text, group_size=group_size)
+
         try:
             from playwright.async_api import async_playwright
         except Exception:
             fallback = LinkOnlyHousingSearchProvider()
-            response = await fallback.search(destination=destination, dates_text=dates_text, group_size=group_size)
-            response.summary = (
-                "Playwright-режим пока недоступен в окружении. Ниже быстрые русские источники по жилью."
-            )
+            response = await fallback.search(destination=normalized_destination, dates_text=dates_text, group_size=group_size)
+            response.summary = "Playwright-режим пока недоступен в окружении. Ниже быстрые русские источники по жилью."
             return response
 
-        query = destination.strip() or "Россия"
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=True)
             page = await browser.new_page()
             try:
                 await page.goto(
-                    f"https://ostrovok.ru/hotel/search/?q={query}",
+                    f"https://ostrovok.ru/hotel/search/?q={normalized_destination}",
                     wait_until="domcontentloaded",
                     timeout=self._timeout_ms,
                 )
@@ -87,7 +98,7 @@ class PlaywrightHousingSearchProvider:
                 await browser.close()
 
         fallback = LinkOnlyHousingSearchProvider()
-        response = await fallback.search(destination=destination, dates_text=dates_text, group_size=group_size)
+        response = await fallback.search(destination=normalized_destination, dates_text=dates_text, group_size=group_size)
         response.mode = "playwright_stub"
         response.summary = (
             f"Playwright-слой подключён и может ходить в браузер. "

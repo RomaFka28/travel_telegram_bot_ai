@@ -3,6 +3,7 @@ from __future__ import annotations
 import urllib.parse
 
 from travel_result_models import TravelSearchResult, trim_results
+from value_normalization import normalized_search_value
 from weather_service import _parse_dates_range
 
 
@@ -26,6 +27,26 @@ CATEGORY_TITLES: dict[str, str] = {
     "transfers": "Трансферы",
 }
 
+SOURCE_LABELS = {
+    "✈️ Билеты": "Билеты",
+    "🏨 Островок": "Островок",
+    "🏠 Суточно": "Суточно",
+    "🧳 Яндекс Путешествия": "Яндекс Путешествия",
+    "🏘 Avito Путешествия": "Avito Путешествия",
+    "🌲 Мир Турбаз": "Мир Турбаз",
+    "🎟 Tripster": "Tripster",
+    "🛰 Sputnik8": "Sputnik8",
+    "🎧 WeGoTrip": "WeGoTrip",
+    "🥾 YouTravel": "YouTravel",
+    "🚆 Tutu": "Tutu",
+    "🗺 Маршрут": "Маршрут",
+    "🚗 Avito аренда авто": "Avito аренда авто",
+    "🚘 Карта и прокат": "Карта и прокат",
+    "🏍 Avito мото / байк": "Avito мото / байк",
+    "🛵 Карта и прокат": "Карта и прокат",
+    "🚕 Трансфер / такси": "Трансфер / такси",
+}
+
 
 def detect_link_needs(context_text: str) -> set[str]:
     lowered = (context_text or "").lower()
@@ -37,26 +58,32 @@ def detect_link_needs(context_text: str) -> set[str]:
 
 
 def _ticket_links(destination: str, origin: str, start_date: str | None, end_date: str | None) -> list[tuple[str, str]]:
-    encoded_destination = urllib.parse.quote(destination)
-    encoded_origin = urllib.parse.quote(origin) if origin and origin != "не указано" else ""
+    normalized_destination = normalized_search_value(destination)
+    normalized_origin = normalized_search_value(origin)
+    if not normalized_destination:
+        return []
+
+    encoded_destination = urllib.parse.quote(normalized_destination)
+    encoded_origin = urllib.parse.quote(normalized_origin) if normalized_origin else ""
+
     if start_date and end_date:
         if encoded_origin:
             aviasales = (
                 "https://www.aviasales.ru/search/"
-                f"{urllib.parse.quote(origin)}{start_date[8:10]}{start_date[5:7]}"
+                f"{urllib.parse.quote(normalized_origin)}{start_date[8:10]}{start_date[5:7]}"
                 f"{encoded_destination}{end_date[8:10]}{end_date[5:7]}1"
             )
         else:
             aviasales = (
                 "https://www.aviasales.ru/search?"
                 + urllib.parse.urlencode(
-                    {"destination": destination, "depart_date": start_date, "return_date": end_date}
+                    {"destination": normalized_destination, "depart_date": start_date, "return_date": end_date}
                 )
             )
     elif encoded_origin:
         aviasales = (
             "https://www.aviasales.ru/search?"
-            + urllib.parse.urlencode({"origin": origin, "destination": destination})
+            + urllib.parse.urlencode({"origin": normalized_origin, "destination": normalized_destination})
         )
     else:
         aviasales = f"https://www.aviasales.ru/search?destination={encoded_destination}"
@@ -64,39 +91,44 @@ def _ticket_links(destination: str, origin: str, start_date: str | None, end_dat
 
 
 def _housing_links(destination: str, start_date: str | None, end_date: str | None) -> list[tuple[str, str]]:
+    normalized_destination = normalized_search_value(destination)
+    if not normalized_destination:
+        return []
+
     if start_date and end_date:
         return [
             (
                 "🏨 Островок",
                 "https://ostrovok.ru/hotel/search/?"
-                + urllib.parse.urlencode({"q": destination, "checkin": start_date, "checkout": end_date}),
+                + urllib.parse.urlencode({"q": normalized_destination, "checkin": start_date, "checkout": end_date}),
             ),
             (
                 "🏠 Суточно",
                 "https://sutochno.ru/search?"
-                + urllib.parse.urlencode({"q": destination, "datefrom": start_date, "dateto": end_date}),
+                + urllib.parse.urlencode({"q": normalized_destination, "datefrom": start_date, "dateto": end_date}),
             ),
             (
                 "🧳 Яндекс Путешествия",
                 "https://travel.yandex.ru/hotels/search?"
-                + urllib.parse.urlencode({"where": destination, "checkinDate": start_date, "checkoutDate": end_date}),
+                + urllib.parse.urlencode({"where": normalized_destination, "checkinDate": start_date, "checkoutDate": end_date}),
             ),
         ]
-    encoded_destination = urllib.parse.quote(destination)
+
+    encoded_destination = urllib.parse.quote(normalized_destination)
     return [
         ("🏨 Островок", f"https://ostrovok.ru/hotel/search/?q={encoded_destination}"),
         ("🏠 Суточно", f"https://sutochno.ru/search?city={encoded_destination}"),
         ("🧳 Яндекс Путешествия", f"https://travel.yandex.ru/hotels/search?where={encoded_destination}"),
-        (
-            "🏘 Avito Путешествия",
-            f"https://www.avito.ru/rossiya/kvartiry/sdam/posutochno?cd=1&q={encoded_destination}",
-        ),
+        ("🏘 Avito Путешествия", f"https://www.avito.ru/rossiya/kvartiry/sdam/posutochno?cd=1&q={encoded_destination}"),
         ("🌲 Мир Турбаз", f"https://mirturbaz.ru/catalog/russia?search={encoded_destination}"),
     ]
 
 
 def _excursion_links(destination: str) -> list[tuple[str, str]]:
-    encoded_destination = urllib.parse.quote(destination)
+    normalized_destination = normalized_search_value(destination)
+    if not normalized_destination:
+        return []
+    encoded_destination = urllib.parse.quote(normalized_destination)
     return [
         ("🎟 Tripster", f"https://experience.tripster.ru/search/?query={encoded_destination}"),
         ("🛰 Sputnik8", f"https://sputnik8.com/ru/search?query={encoded_destination}"),
@@ -106,7 +138,10 @@ def _excursion_links(destination: str) -> list[tuple[str, str]]:
 
 
 def _road_links(destination: str) -> list[tuple[str, str]]:
-    encoded_destination = urllib.parse.quote(destination)
+    normalized_destination = normalized_search_value(destination)
+    if not normalized_destination:
+        return []
+    encoded_destination = urllib.parse.quote(normalized_destination)
     return [
         ("🚆 Tutu", f"https://www.tutu.ru/poezda/order/?to={encoded_destination}"),
         ("🗺 Маршрут", f"https://yandex.ru/maps/?text={encoded_destination}"),
@@ -114,7 +149,10 @@ def _road_links(destination: str) -> list[tuple[str, str]]:
 
 
 def _car_rental_links(destination: str) -> list[tuple[str, str]]:
-    encoded_destination = urllib.parse.quote(destination)
+    normalized_destination = normalized_search_value(destination)
+    if not normalized_destination:
+        return []
+    encoded_destination = urllib.parse.quote(normalized_destination)
     return [
         ("🚗 Avito аренда авто", f"https://www.avito.ru/rossiya?q=аренда+авто+{encoded_destination}"),
         ("🚘 Карта и прокат", f"https://yandex.ru/maps/?text=аренда+авто+{encoded_destination}"),
@@ -122,7 +160,10 @@ def _car_rental_links(destination: str) -> list[tuple[str, str]]:
 
 
 def _bike_rental_links(destination: str) -> list[tuple[str, str]]:
-    encoded_destination = urllib.parse.quote(destination)
+    normalized_destination = normalized_search_value(destination)
+    if not normalized_destination:
+        return []
+    encoded_destination = urllib.parse.quote(normalized_destination)
     return [
         ("🏍 Avito мото / байк", f"https://www.avito.ru/rossiya?q=аренда+мото+{encoded_destination}"),
         ("🛵 Карта и прокат", f"https://yandex.ru/maps/?text=аренда+байка+{encoded_destination}"),
@@ -130,7 +171,10 @@ def _bike_rental_links(destination: str) -> list[tuple[str, str]]:
 
 
 def _transfer_links(destination: str) -> list[tuple[str, str]]:
-    encoded_destination = urllib.parse.quote(destination)
+    normalized_destination = normalized_search_value(destination)
+    if not normalized_destination:
+        return []
+    encoded_destination = urllib.parse.quote(normalized_destination)
     return [
         ("🚕 Трансфер / такси", f"https://yandex.ru/maps/?text=трансфер+{encoded_destination}"),
     ]
@@ -143,9 +187,9 @@ def build_links_map(
     *,
     context_text: str = "",
 ) -> dict[str, str]:
-    destination = (destination or "").strip()
-    origin = (origin or "").strip()
-    if not destination:
+    normalized_destination = normalized_search_value(destination)
+    normalized_origin = normalized_search_value(origin) or ""
+    if not normalized_destination:
         return {}
 
     date_range = _parse_dates_range(dates_text)
@@ -155,22 +199,24 @@ def build_links_map(
 
     link_items: list[tuple[str, str]] = []
     if "tickets" in needs:
-        link_items.extend(_ticket_links(destination, origin, start_date, end_date))
+        link_items.extend(_ticket_links(normalized_destination, normalized_origin, start_date, end_date))
     if "housing" in needs:
-        link_items.extend(_housing_links(destination, start_date, end_date))
+        link_items.extend(_housing_links(normalized_destination, start_date, end_date))
     if "excursions" in needs:
-        link_items.extend(_excursion_links(destination))
+        link_items.extend(_excursion_links(normalized_destination))
     if "road" in needs:
-        link_items.extend(_road_links(destination))
+        link_items.extend(_road_links(normalized_destination))
     if "car_rental" in needs:
-        link_items.extend(_car_rental_links(destination))
+        link_items.extend(_car_rental_links(normalized_destination))
     if "bike_rental" in needs:
-        link_items.extend(_bike_rental_links(destination))
+        link_items.extend(_bike_rental_links(normalized_destination))
     if "transfers" in needs:
-        link_items.extend(_transfer_links(destination))
+        link_items.extend(_transfer_links(normalized_destination))
 
     if not link_items:
-        link_items = _ticket_links(destination, origin, start_date, end_date) + _housing_links(destination, start_date, end_date)[:2]
+        link_items = _ticket_links(normalized_destination, normalized_origin, start_date, end_date) + _housing_links(
+            normalized_destination, start_date, end_date
+        )[:2]
 
     return dict(link_items)
 
@@ -182,9 +228,9 @@ def build_structured_link_results(
     *,
     context_text: str = "",
 ) -> dict[str, list[TravelSearchResult]]:
-    destination = (destination or "").strip()
-    origin = (origin or "").strip()
-    if not destination:
+    normalized_destination = normalized_search_value(destination)
+    normalized_origin = normalized_search_value(origin) or ""
+    if not normalized_destination:
         return {}
 
     date_range = _parse_dates_range(dates_text)
@@ -196,19 +242,33 @@ def build_structured_link_results(
 
     category_links: dict[str, list[tuple[str, str]]] = {}
     if "tickets" in needs:
-        category_links["tickets"] = _ticket_links(destination, origin, start_date, end_date)
+        ticket_links = _ticket_links(normalized_destination, normalized_origin, start_date, end_date)
+        if ticket_links:
+            category_links["tickets"] = ticket_links
     if "housing" in needs:
-        category_links["housing"] = _housing_links(destination, start_date, end_date)
+        housing_links = _housing_links(normalized_destination, start_date, end_date)
+        if housing_links:
+            category_links["housing"] = housing_links
     if "excursions" in needs:
-        category_links["excursions"] = _excursion_links(destination)
+        excursion_links = _excursion_links(normalized_destination)
+        if excursion_links:
+            category_links["excursions"] = excursion_links
     if "road" in needs:
-        category_links["road"] = _road_links(destination)
+        road_links = _road_links(normalized_destination)
+        if road_links:
+            category_links["road"] = road_links
     if "car_rental" in needs:
-        category_links["car_rental"] = _car_rental_links(destination)
+        car_links = _car_rental_links(normalized_destination)
+        if car_links:
+            category_links["car_rental"] = car_links
     if "bike_rental" in needs:
-        category_links["bike_rental"] = _bike_rental_links(destination)
+        bike_links = _bike_rental_links(normalized_destination)
+        if bike_links:
+            category_links["bike_rental"] = bike_links
     if "transfers" in needs:
-        category_links["transfers"] = _transfer_links(destination)
+        transfer_links = _transfer_links(normalized_destination)
+        if transfer_links:
+            category_links["transfers"] = transfer_links
 
     structured: dict[str, list[TravelSearchResult]] = {}
     for category, items in category_links.items():
@@ -217,7 +277,7 @@ def build_structured_link_results(
                 title=f"{CATEGORY_TITLES.get(category, category)}: {label}",
                 price_text="Откройте ссылку, чтобы увидеть актуальные варианты и цены.",
                 url=url,
-                source=label.replace("✈️ ", "").replace("🏨 ", "").replace("🏠 ", "").replace("🧳 ", "").replace("🎟 ", "").replace("🛰 ", "").replace("🎧 ", "").replace("🥾 ", "").replace("🚆 ", "").replace("🗺 ", "").replace("🚗 ", "").replace("🚘 ", "").replace("🏍 ", "").replace("🛵 ", "").replace("🚕 ", ""),
+                source=SOURCE_LABELS.get(label, label),
                 dates=dates_text or "",
                 note="Подобрано из обсуждения в чате.",
             )

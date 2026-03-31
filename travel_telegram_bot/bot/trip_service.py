@@ -8,6 +8,7 @@ from travel_links import build_links_text, build_structured_link_results, detect
 from travel_result_models import TravelSearchResult, serialize_needs, serialize_results, trim_results
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
+from value_normalization import normalized_search_value
 from weather_service import WeatherError, fetch_weather_summary
 
 if TYPE_CHECKING:
@@ -115,19 +116,19 @@ class TripService:
         questions: list[str] = []
         normalized_interests = (request.interests_text or "").strip().lower()
         has_specific_interests = normalized_interests not in {"", "не указаны", "не указано"}
-        if not request.destination or request.destination == "не указано":
+        if not normalized_search_value(request.destination):
             questions.append("Уточнить направление поездки.")
-        if not request.dates_text or request.dates_text == "не указаны":
+        if not normalized_search_value(request.dates_text):
             questions.append("Выбрать точные даты, чтобы собрать жильё и дорогу точнее.")
-        if "tickets" in detected_needs and (not request.origin or request.origin == "не указано"):
+        if "tickets" in detected_needs and not normalized_search_value(request.origin):
             questions.append("Уточнить город вылета для билетов.")
-        if "housing" in detected_needs and not structured_results["housing_results"]:
+        if "housing" in detected_needs:
             questions.append("Подтвердить формат жилья: отель, квартира или дом.")
         if "car_rental" in detected_needs:
             questions.append("Нужна ли аренда авто на все дни или только на 1 день.")
         if "bike_rental" in detected_needs:
             questions.append("Понять, нужен ли байк/скутер всем или только части группы.")
-        if "road" in detected_needs and not request.dates_text:
+        if "road" in detected_needs and not normalized_search_value(request.dates_text):
             questions.append("Подтвердить день выезда, чтобы подобрать дорогу без лишних пересадок.")
         if "excursions" in detected_needs and not has_specific_interests:
             questions.append("Выбрать тип экскурсий: прогулки, музеи, гастро или природа.")
@@ -137,8 +138,15 @@ class TripService:
             cleaned = line.strip()
             if "?" in cleaned and cleaned not in questions:
                 questions.append(cleaned)
-
-        return "\n".join(f"• {question}" for question in questions[:6])
+        unique_questions: list[str] = []
+        seen: set[str] = set()
+        for question in questions:
+            key = question.lower().strip()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_questions.append(question)
+        return "\n".join(f"• {question}" for question in unique_questions[:6])
 
     def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
         notes = request.notes if notes_override is None else notes_override

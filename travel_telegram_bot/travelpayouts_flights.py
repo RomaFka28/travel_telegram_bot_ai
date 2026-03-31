@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from travel_result_models import TravelSearchResult, trim_results
 from travel_planner import BUDGET_HINTS
 from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient
+from value_normalization import normalized_search_value
 from weather_service import _parse_dates_range
 
 
@@ -58,25 +59,27 @@ class TravelpayoutsFlightProvider:
     ) -> str:
         if not self.enabled:
             return ""
-        if not destination or destination == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
+        normalized_destination = normalized_search_value(destination)
+        normalized_origin = normalized_search_value(origin)
+        if not normalized_destination:
             return ""
-        if not origin or origin == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
+        if not normalized_origin:
             return (
                 "\u0411\u0438\u043b\u0435\u0442\u044b: \u0447\u0442\u043e\u0431\u044b \u043f\u043e\u043a\u0430\u0437\u0430\u0442\u044c \u0446\u0435\u043d\u044b \u0447\u0435\u0440\u0435\u0437 Travelpayouts, \u043d\u0443\u0436\u0435\u043d \u0433\u043e\u0440\u043e\u0434 \u0432\u044b\u043b\u0435\u0442\u0430.\n"
                 "\u041f\u043e\u0434\u0441\u043a\u0430\u0437\u043a\u0430: \u043d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u0432 \u0447\u0430\u0442\u0435 \u0447\u0442\u043e-\u0442\u043e \u0432\u0440\u043e\u0434\u0435 \u00ab\u043b\u0435\u0442\u0438\u043c \u0438\u0437 \u0422\u043e\u043c\u0441\u043a\u0430\u00bb \u0438\u043b\u0438 \u043e\u0431\u043d\u043e\u0432\u0438\u0442\u0435 \u043f\u043e\u0435\u0437\u0434\u043a\u0443 \u0447\u0435\u0440\u0435\u0437 /plan."
             )
 
         results = self.search_results(
-            origin=origin,
-            destination=destination,
+            origin=normalized_origin,
+            destination=normalized_destination,
             dates_text=dates_text,
             budget_text=budget_text,
             group_size=group_size,
         )
         if not results:
             try:
-                origin_match = self._resolve_place(origin)
-                destination_match = self._resolve_place(destination)
+                origin_match = self._resolve_place(normalized_origin)
+                destination_match = self._resolve_place(normalized_destination)
                 date_range = _parse_dates_range(dates_text)
                 search_url = self._build_search_url(
                     origin_code=origin_match.code,
@@ -87,11 +90,11 @@ class TravelpayoutsFlightProvider:
             except TravelpayoutsError:
                 search_url = "https://www.aviasales.ru"
             return (
-                f"\u0411\u0438\u043b\u0435\u0442\u044b: Travelpayouts \u043f\u043e\u043a\u0430 \u043d\u0435 \u0432\u0435\u0440\u043d\u0443\u043b \u0441\u0432\u0435\u0436\u0438\u0445 \u0446\u0435\u043d \u043f\u043e \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044e {origin} -> {destination}.\n"
+                f"\u0411\u0438\u043b\u0435\u0442\u044b: Travelpayouts \u043f\u043e\u043a\u0430 \u043d\u0435 \u0432\u0435\u0440\u043d\u0443\u043b \u0441\u0432\u0435\u0436\u0438\u0445 \u0446\u0435\u043d \u043f\u043e \u043d\u0430\u043f\u0440\u0430\u0432\u043b\u0435\u043d\u0438\u044e {normalized_origin} -> {normalized_destination}.\n"
                 f"\u041f\u043e\u0438\u0441\u043a / \u043f\u043e\u043a\u0443\u043f\u043a\u0430: {search_url}"
             )
 
-        lines = [f"Travelpayouts / Aviasales: \u0441\u0432\u0435\u0436\u0438\u0435 \u0446\u0435\u043d\u044b \u0434\u043b\u044f {origin} -> {destination}"]
+        lines = [f"Travelpayouts / Aviasales: \u0441\u0432\u0435\u0436\u0438\u0435 \u0446\u0435\u043d\u044b \u0434\u043b\u044f {normalized_origin} -> {normalized_destination}"]
         for index, result in enumerate(results[:3], start=1):
             parts = [result.price_text]
             if result.dates:
@@ -113,14 +116,16 @@ class TravelpayoutsFlightProvider:
     ) -> list[TravelSearchResult]:
         if not self.enabled:
             return []
-        if not destination or destination == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
+        normalized_destination = normalized_search_value(destination)
+        normalized_origin = normalized_search_value(origin)
+        if not normalized_destination:
             return []
-        if not origin or origin == "\u043d\u0435 \u0443\u043a\u0430\u0437\u0430\u043d\u043e":
+        if not normalized_origin:
             return []
 
         try:
-            origin_match = self._resolve_place(origin)
-            destination_match = self._resolve_place(destination)
+            origin_match = self._resolve_place(normalized_origin)
+            destination_match = self._resolve_place(normalized_destination)
             date_range = _parse_dates_range(dates_text)
             if date_range:
                 offers = self._search_prices_for_dates(
@@ -144,7 +149,7 @@ class TravelpayoutsFlightProvider:
         except TravelpayoutsError as exc:
             return [
                 TravelSearchResult(
-                    title=f"\u0410\u0432\u0438\u0430\u0431\u0438\u043b\u0435\u0442\u044b {origin} -> {destination}",
+                    title=f"\u0410\u0432\u0438\u0430\u0431\u0438\u043b\u0435\u0442\u044b {normalized_origin} -> {normalized_destination}",
                     price_text="\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0446\u0435\u043d\u044b \u043f\u0440\u044f\u043c\u043e \u0441\u0435\u0439\u0447\u0430\u0441.",
                     url="https://www.aviasales.ru",
                     source="Travelpayouts / Aviasales",

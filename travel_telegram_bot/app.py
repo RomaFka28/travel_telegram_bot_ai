@@ -102,6 +102,7 @@ def build_application():
 
     new_trip_conversation = ConversationHandler(
         entry_points=[CommandHandler("newtrip", handlers.new_trip_start)],
+        allow_reentry=True,
         states={
             NEW_TRIP_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.new_trip_title)],
             NEW_TRIP_DESTINATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.new_trip_destination)],
