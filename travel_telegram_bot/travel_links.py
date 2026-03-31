@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import urllib.parse
 
+from travel_locale import detect_route_locale
 from travel_result_models import TravelSearchResult, trim_results
 from value_normalization import normalized_search_value
 from weather_service import _parse_dates_range
@@ -11,7 +12,7 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "tickets": ("билет", "авиа", "самолет", "самолёт", "летим", "перелет", "перелёт", "рейс"),
     "housing": ("отел", "гостини", "жиль", "апарт", "квартир", "суточ", "ночев", "домик", "турбаз"),
     "excursions": ("экскурс", "гид", "музей", "тур", "tripster", "sputnik", "wegotrip", "аудиогид"),
-    "road": ("поезд", "автобус", "дорог", "маршрут", "электрич", "жд", "ж/д", "tutu"),
+    "road": ("поезд", "автобус", "дорог", "маршрут", "электрич", "жд", "ж/д", "tutu", "omio"),
     "car_rental": ("аренд", "машин", "авто", "тачк", "прокат авто", "car rent"),
     "bike_rental": ("мото", "байк", "скутер", "мопед", "прокат байка", "прокат мото"),
     "transfers": ("трансфер", "такси", "из аэропорта", "в аэропорт"),
@@ -34,17 +35,29 @@ SOURCE_LABELS = {
     "🧳 Яндекс Путешествия": "Яндекс Путешествия",
     "🏘 Avito Путешествия": "Avito Путешествия",
     "🌲 Мир Турбаз": "Мир Турбаз",
+    "🏨 Booking.com": "Booking.com",
+    "🛎 Agoda": "Agoda",
+    "🧭 Tripadvisor Hotels": "Tripadvisor Hotels",
     "🎟 Tripster": "Tripster",
     "🛰 Sputnik8": "Sputnik8",
     "🎧 WeGoTrip": "WeGoTrip",
     "🥾 YouTravel": "YouTravel",
+    "🌍 GetYourGuide": "GetYourGuide",
+    "🏛 Tiqets": "Tiqets",
+    "🧳 Viator": "Viator",
     "🚆 Tutu": "Tutu",
     "🗺 Маршрут": "Маршрут",
+    "🚄 Omio": "Omio",
+    "🌍 Rome2Rio": "Rome2Rio",
     "🚗 Avito аренда авто": "Avito аренда авто",
     "🚘 Карта и прокат": "Карта и прокат",
+    "🚗 Rentalcars": "Rentalcars",
+    "🚙 DiscoverCars": "DiscoverCars",
     "🏍 Avito мото / байк": "Avito мото / байк",
     "🛵 Карта и прокат": "Карта и прокат",
+    "🛵 BikesBooking": "BikesBooking",
     "🚕 Трансфер / такси": "Трансфер / такси",
+    "🚐 Kiwitaxi": "Kiwitaxi",
 }
 
 
@@ -63,30 +76,25 @@ def _ticket_links(destination: str, origin: str, start_date: str | None, end_dat
     if not normalized_destination:
         return []
 
-    encoded_destination = urllib.parse.quote(normalized_destination)
-    encoded_origin = urllib.parse.quote(normalized_origin) if normalized_origin else ""
-
     if start_date and end_date:
-        if encoded_origin:
-            aviasales = (
-                "https://www.aviasales.ru/search/"
-                f"{urllib.parse.quote(normalized_origin)}{start_date[8:10]}{start_date[5:7]}"
-                f"{encoded_destination}{end_date[8:10]}{end_date[5:7]}1"
+        aviasales = (
+            "https://www.aviasales.ru/search?"
+            + urllib.parse.urlencode(
+                {
+                    "origin": normalized_origin or "",
+                    "destination": normalized_destination,
+                    "depart_date": start_date,
+                    "return_date": end_date,
+                }
             )
-        else:
-            aviasales = (
-                "https://www.aviasales.ru/search?"
-                + urllib.parse.urlencode(
-                    {"destination": normalized_destination, "depart_date": start_date, "return_date": end_date}
-                )
-            )
-    elif encoded_origin:
+        )
+    elif normalized_origin:
         aviasales = (
             "https://www.aviasales.ru/search?"
             + urllib.parse.urlencode({"origin": normalized_origin, "destination": normalized_destination})
         )
     else:
-        aviasales = f"https://www.aviasales.ru/search?destination={encoded_destination}"
+        aviasales = "https://www.aviasales.ru/search?" + urllib.parse.urlencode({"destination": normalized_destination})
     return [("✈️ Билеты", aviasales)]
 
 
@@ -95,32 +103,44 @@ def _housing_links(destination: str, start_date: str | None, end_date: str | Non
     if not normalized_destination:
         return []
 
-    if start_date and end_date:
+    locale = detect_route_locale(normalized_destination)
+    ru_cis = locale.is_ru_cis_destination
+    if ru_cis:
+        if start_date and end_date:
+            return [
+                (
+                    "🏨 Островок",
+                    "https://ostrovok.ru/hotel/search/?"
+                    + urllib.parse.urlencode({"q": normalized_destination, "checkin": start_date, "checkout": end_date}),
+                ),
+                (
+                    "🏠 Суточно",
+                    "https://sutochno.ru/search?"
+                    + urllib.parse.urlencode({"q": normalized_destination, "datefrom": start_date, "dateto": end_date}),
+                ),
+                (
+                    "🧳 Яндекс Путешествия",
+                    "https://travel.yandex.ru/hotels/search?"
+                    + urllib.parse.urlencode({"where": normalized_destination, "checkinDate": start_date, "checkoutDate": end_date}),
+                ),
+            ]
+
+        encoded_destination = urllib.parse.quote(normalized_destination)
         return [
-            (
-                "🏨 Островок",
-                "https://ostrovok.ru/hotel/search/?"
-                + urllib.parse.urlencode({"q": normalized_destination, "checkin": start_date, "checkout": end_date}),
-            ),
-            (
-                "🏠 Суточно",
-                "https://sutochno.ru/search?"
-                + urllib.parse.urlencode({"q": normalized_destination, "datefrom": start_date, "dateto": end_date}),
-            ),
-            (
-                "🧳 Яндекс Путешествия",
-                "https://travel.yandex.ru/hotels/search?"
-                + urllib.parse.urlencode({"where": normalized_destination, "checkinDate": start_date, "checkoutDate": end_date}),
-            ),
+            ("🏨 Островок", f"https://ostrovok.ru/hotel/search/?q={encoded_destination}"),
+            ("🏠 Суточно", f"https://sutochno.ru/search?city={encoded_destination}"),
+            ("🧳 Яндекс Путешествия", f"https://travel.yandex.ru/hotels/search?where={encoded_destination}"),
+            ("🏘 Avito Путешествия", f"https://www.avito.ru/rossiya/kvartiry/sdam/posutochno?cd=1&q={encoded_destination}"),
+            ("🌲 Мир Турбаз", f"https://mirturbaz.ru/catalog/russia?search={encoded_destination}"),
         ]
 
-    encoded_destination = urllib.parse.quote(normalized_destination)
+    booking_params = {"ss": normalized_destination}
+    if start_date and end_date:
+        booking_params.update({"checkin": start_date, "checkout": end_date})
     return [
-        ("🏨 Островок", f"https://ostrovok.ru/hotel/search/?q={encoded_destination}"),
-        ("🏠 Суточно", f"https://sutochno.ru/search?city={encoded_destination}"),
-        ("🧳 Яндекс Путешествия", f"https://travel.yandex.ru/hotels/search?where={encoded_destination}"),
-        ("🏘 Avito Путешествия", f"https://www.avito.ru/rossiya/kvartiry/sdam/posutochno?cd=1&q={encoded_destination}"),
-        ("🌲 Мир Турбаз", f"https://mirturbaz.ru/catalog/russia?search={encoded_destination}"),
+        ("🏨 Booking.com", "https://www.booking.com/searchresults.html?" + urllib.parse.urlencode(booking_params)),
+        ("🛎 Agoda", "https://www.agoda.com/search?" + urllib.parse.urlencode({"city": normalized_destination})),
+        ("🧭 Tripadvisor Hotels", "https://www.tripadvisor.com/Search?" + urllib.parse.urlencode({"q": f"hotels {normalized_destination}"})),
     ]
 
 
@@ -129,11 +149,18 @@ def _excursion_links(destination: str) -> list[tuple[str, str]]:
     if not normalized_destination:
         return []
     encoded_destination = urllib.parse.quote(normalized_destination)
+    locale = detect_route_locale(normalized_destination)
+    if locale.is_ru_cis_destination:
+        return [
+            ("🎟 Tripster", f"https://experience.tripster.ru/search/?query={encoded_destination}"),
+            ("🛰 Sputnik8", f"https://sputnik8.com/ru/search?query={encoded_destination}"),
+            ("🎧 WeGoTrip", f"https://wegotrip.com/search/?query={encoded_destination}"),
+            ("🥾 YouTravel", f"https://youtravel.me/search?query={encoded_destination}"),
+        ]
     return [
-        ("🎟 Tripster", f"https://experience.tripster.ru/search/?query={encoded_destination}"),
-        ("🛰 Sputnik8", f"https://sputnik8.com/ru/search?query={encoded_destination}"),
-        ("🎧 WeGoTrip", f"https://wegotrip.com/search/?query={encoded_destination}"),
-        ("🥾 YouTravel", f"https://youtravel.me/search?query={encoded_destination}"),
+        ("🌍 GetYourGuide", f"https://www.getyourguide.com/s/?q={encoded_destination}"),
+        ("🏛 Tiqets", f"https://www.tiqets.com/en/search?query={encoded_destination}"),
+        ("🧳 Viator", f"https://www.viator.com/searchResults/all?text={encoded_destination}"),
     ]
 
 
@@ -142,9 +169,16 @@ def _road_links(destination: str) -> list[tuple[str, str]]:
     if not normalized_destination:
         return []
     encoded_destination = urllib.parse.quote(normalized_destination)
+    locale = detect_route_locale(normalized_destination)
+    if locale.is_ru_cis_destination:
+        return [
+            ("🚆 Tutu", f"https://www.tutu.ru/poezda/order/?to={encoded_destination}"),
+            ("🗺 Маршрут", f"https://yandex.ru/maps/?text={encoded_destination}"),
+        ]
     return [
-        ("🚆 Tutu", f"https://www.tutu.ru/poezda/order/?to={encoded_destination}"),
-        ("🗺 Маршрут", f"https://yandex.ru/maps/?text={encoded_destination}"),
+        ("🚄 Omio", f"https://www.omio.com/search-frontend/results?destination={encoded_destination}"),
+        ("🌍 Rome2Rio", f"https://www.rome2rio.com/s/{encoded_destination}"),
+        ("🗺 Маршрут", f"https://www.google.com/maps/search/{encoded_destination}"),
     ]
 
 
@@ -153,9 +187,16 @@ def _car_rental_links(destination: str) -> list[tuple[str, str]]:
     if not normalized_destination:
         return []
     encoded_destination = urllib.parse.quote(normalized_destination)
+    locale = detect_route_locale(normalized_destination)
+    if locale.is_ru_cis_destination:
+        return [
+            ("🚗 Avito аренда авто", f"https://www.avito.ru/rossiya?q=аренда+авто+{encoded_destination}"),
+            ("🚘 Карта и прокат", f"https://yandex.ru/maps/?text=аренда+авто+{encoded_destination}"),
+        ]
     return [
-        ("🚗 Avito аренда авто", f"https://www.avito.ru/rossiya?q=аренда+авто+{encoded_destination}"),
-        ("🚘 Карта и прокат", f"https://yandex.ru/maps/?text=аренда+авто+{encoded_destination}"),
+        ("🚗 Rentalcars", f"https://www.rentalcars.com/SearchResults.do?dropLocation={encoded_destination}"),
+        ("🚙 DiscoverCars", f"https://www.discovercars.com/?q={encoded_destination}"),
+        ("🚘 Карта и прокат", f"https://www.google.com/maps/search/car+rental+{encoded_destination}"),
     ]
 
 
@@ -164,9 +205,15 @@ def _bike_rental_links(destination: str) -> list[tuple[str, str]]:
     if not normalized_destination:
         return []
     encoded_destination = urllib.parse.quote(normalized_destination)
+    locale = detect_route_locale(normalized_destination)
+    if locale.is_ru_cis_destination:
+        return [
+            ("🏍 Avito мото / байк", f"https://www.avito.ru/rossiya?q=аренда+мото+{encoded_destination}"),
+            ("🛵 Карта и прокат", f"https://yandex.ru/maps/?text=аренда+байка+{encoded_destination}"),
+        ]
     return [
-        ("🏍 Avito мото / байк", f"https://www.avito.ru/rossiya?q=аренда+мото+{encoded_destination}"),
-        ("🛵 Карта и прокат", f"https://yandex.ru/maps/?text=аренда+байка+{encoded_destination}"),
+        ("🛵 BikesBooking", f"https://bikesbooking.com/en/search?query={encoded_destination}"),
+        ("🛵 Карта и прокат", f"https://www.google.com/maps/search/bike+rental+{encoded_destination}"),
     ]
 
 
@@ -175,8 +222,12 @@ def _transfer_links(destination: str) -> list[tuple[str, str]]:
     if not normalized_destination:
         return []
     encoded_destination = urllib.parse.quote(normalized_destination)
+    locale = detect_route_locale(normalized_destination)
+    if locale.is_ru_cis_destination:
+        return [("🚕 Трансфер / такси", f"https://yandex.ru/maps/?text=трансфер+{encoded_destination}")]
     return [
-        ("🚕 Трансфер / такси", f"https://yandex.ru/maps/?text=трансфер+{encoded_destination}"),
+        ("🚐 Kiwitaxi", f"https://kiwitaxi.com/en/search?query={encoded_destination}"),
+        ("🚕 Трансфер / такси", f"https://www.google.com/maps/search/airport+transfer+{encoded_destination}"),
     ]
 
 
@@ -300,7 +351,7 @@ def build_links_text(
 
     lines = [f"{label}: {url}" for label, url in links.items()]
     lines.append(
-        "💡 Бот показывает только те поисковые сценарии, которые прозвучали в переписке. "
+        "Бот показывает только те поисковые сценарии, которые прозвучали в переписке. "
         "Live-цены по билетам доступны через Travelpayouts."
     )
     return "\n".join(lines)

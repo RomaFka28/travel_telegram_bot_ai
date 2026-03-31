@@ -52,12 +52,12 @@ def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> d
         "Use these exact string keys: "
         "context_text, itinerary_text, logistics_text, stay_text, "
         "alternatives_text, budget_breakdown_text, budget_total_text. "
-        "All budget amounts should be in RUB. "
+        "Use destination-appropriate currency when it is obvious; otherwise explain that local pricing needs a separate live check. "
         "If web search is available, use fresh public information when it helps. "
         "Do not invent exact live prices. If exact prices are unavailable, give an honest range or guidance. "
         "Keep itinerary_text in the format 'День 1. ...\\nДень 2. ...'. "
         "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Итого ориентир:'. "
-        "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека'."
+        "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека' or 'нужна проверка live-цен'."
     )
 
     user = (

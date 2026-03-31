@@ -175,7 +175,7 @@ class TripFormatter:
             "• собирает поездку из переписки\n"
             "• показывает погоду\n"
             "• подтягивает цены на билеты через Travelpayouts, если известен город вылета\n"
-            "• даёт русские ссылки на билеты, жильё и экскурсии\n"
+            "• подбирает ссылки по направлению: для РФ/СНГ локальные сервисы, для зарубежа международные\n"
             "• хранит активную поездку и историю\n\n"
             "<b>Ограничения</b>\n"
             "• бот не бронирует билеты и жильё\n"
@@ -263,6 +263,7 @@ class TripFormatter:
         weather_text = (trip.get("weather_text") or "").strip()
         summary_short = (trip.get("summary_short_text") or "").strip()
         open_questions = (trip.get("open_questions_text") or "").strip()
+        entry_requirements = (trip.get("entry_requirements_text") or "").strip()
         destination = normalized_search_value(trip.get("destination")) or "не указано"
         dates_text = normalized_search_value(trip.get("dates_text")) or "уточняется"
         budget_text = normalized_search_value(trip.get("budget_text")) or "не указан"
@@ -292,6 +293,7 @@ class TripFormatter:
             + f"\n\n{readiness_text}\n{html.escape(checklist_text)}"
             + f"\n\n<b>Коротко</b>\n{direction_block}"
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
+            + (f"\n\n<b>Въезд и документы</b>\n{html.escape(entry_requirements)}" if entry_requirements else "")
             + (f"\n\n{compact_sections}" if compact_sections and has_destination else "")
             + (f"\n\n<b>Что ещё уточнить</b>\n{html.escape(open_questions)}" if open_questions else "")
             + "\n\nОткройте /summary, если нужен полный план."
@@ -368,7 +370,9 @@ class TripFormatter:
         )
         notes_text = self._escape_block(trip["notes"] or "—")
         weather_text = (trip["weather_text"] or "").strip()
+        entry_requirements = (trip.get("entry_requirements_text") or "").strip()
         weather_block = f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else ""
+        entry_block = f"\n\n<b>Въезд и документы</b>\n{html.escape(entry_requirements)}" if entry_requirements else ""
         sections = [
             self._category_section(trip, "flight_results"),
             self._category_section(trip, "housing_results"),
@@ -417,5 +421,6 @@ class TripFormatter:
             + open_questions_block
             + (f"\n\n{structured_block}" if structured_block else "")
             + links_block
+            + entry_block
             + weather_block
         )

@@ -223,29 +223,30 @@ class TravelpayoutsFlightProvider:
             return raw[:10]
 
     def _resolve_place(self, term: str) -> PlaceMatch:
-        params = [
-            ("term", term.strip()),
-            ("locale", "ru"),
-            ("types[]", "city"),
-            ("types[]", "airport"),
-        ]
-        url = "https://autocomplete.travelpayouts.com/places2?" + urllib.parse.urlencode(params)
-        payload = self._get_json(url)
-        if not isinstance(payload, list) or not payload:
-            raise TravelpayoutsError(f"\u043d\u0435 \u043d\u0430\u0448\u0451\u043b IATA-\u043a\u043e\u0434 \u0434\u043b\u044f '{term}'")
+        for locale in ("ru", "en"):
+            params = [
+                ("term", term.strip()),
+                ("locale", locale),
+                ("types[]", "city"),
+                ("types[]", "airport"),
+            ]
+            url = "https://autocomplete.travelpayouts.com/places2?" + urllib.parse.urlencode(params)
+            payload = self._get_json(url)
+            if not isinstance(payload, list) or not payload:
+                continue
 
-        for item in payload:
-            place_type = str(item.get("type") or "")
-            code = str(item.get("code") or "").strip().upper()
-            name = str(item.get("name") or term).strip()
-            if place_type == "city" and code:
-                return PlaceMatch(code=code, name=name, type=place_type)
-        for item in payload:
-            place_type = str(item.get("type") or "")
-            code = str(item.get("code") or "").strip().upper()
-            name = str(item.get("name") or term).strip()
-            if code:
-                return PlaceMatch(code=code, name=name, type=place_type or "airport")
+            for item in payload:
+                place_type = str(item.get("type") or "")
+                code = str(item.get("code") or "").strip().upper()
+                name = str(item.get("name") or term).strip()
+                if place_type == "city" and code:
+                    return PlaceMatch(code=code, name=name, type=place_type)
+            for item in payload:
+                place_type = str(item.get("type") or "")
+                code = str(item.get("code") or "").strip().upper()
+                name = str(item.get("name") or term).strip()
+                if code:
+                    return PlaceMatch(code=code, name=name, type=place_type or "airport")
         raise TravelpayoutsError(f"\u043d\u0435 \u043d\u0430\u0448\u0451\u043b IATA-\u043a\u043e\u0434 \u0434\u043b\u044f '{term}'")
 
     def _search_prices_for_dates(

@@ -39,6 +39,7 @@ TRIP_COLUMNS: dict[str, str] = {
     "detected_needs": "TEXT",
     "results_updated_at": "TEXT",
     "open_questions_text": "TEXT",
+    "entry_requirements_text": "TEXT",
     "status": "TEXT NOT NULL DEFAULT 'active'",
     "created_by": "BIGINT",
     "created_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -82,6 +83,7 @@ EDITABLE_TRIP_FIELDS = {
     "detected_needs",
     "results_updated_at",
     "open_questions_text",
+    "entry_requirements_text",
     "status",
 }
 

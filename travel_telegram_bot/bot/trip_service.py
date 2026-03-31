@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from database import Database
+from travel_locale import build_entry_requirements_text, detect_route_locale
 from travel_links import build_links_text, build_structured_link_results, detect_link_needs
 from travel_result_models import TravelSearchResult, serialize_needs, serialize_results, trim_results
 from travelpayouts_flights import TravelpayoutsFlightProvider
@@ -114,6 +115,7 @@ class TripService:
 
     def _build_open_questions(self, request, detected_needs: list[str], structured_results: dict[str, list[TravelSearchResult]]) -> str:
         questions: list[str] = []
+        route_locale = detect_route_locale(request.destination, request.origin)
         normalized_interests = (request.interests_text or "").strip().lower()
         has_specific_interests = normalized_interests not in {"", "не указаны", "не указано"}
         if not normalized_search_value(request.destination):
@@ -132,6 +134,8 @@ class TripService:
             questions.append("Подтвердить день выезда, чтобы подобрать дорогу без лишних пересадок.")
         if "excursions" in detected_needs and not has_specific_interests:
             questions.append("Выбрать тип экскурсий: прогулки, музеи, гастро или природа.")
+        if route_locale.is_international:
+            questions.append("Уточнить гражданство или тип паспорта, чтобы проверить визовые и въездные правила.")
 
         raw_text = f"{request.source_prompt}\n{request.notes}"
         for line in raw_text.splitlines():
@@ -163,6 +167,7 @@ class TripService:
             source_prompt=request.source_prompt,
         )
         detected_needs, structured_results, tickets_text, links_text = self._collect_structured_results(effective_request)
+        entry_requirements_text = build_entry_requirements_text(effective_request.destination, effective_request.origin)
         return {
             "title": effective_request.title,
             "destination": effective_request.destination,
@@ -183,6 +188,7 @@ class TripService:
             "budget_total_text": plan.budget_total_text,
             "tickets_text": tickets_text,
             "links_text": links_text,
+            "entry_requirements_text": entry_requirements_text,
             "summary_short_text": self._build_short_summary(effective_request, detected_needs, structured_results["flight_results"]),
             "flight_results": serialize_results(structured_results["flight_results"]),
             "housing_results": serialize_results(structured_results["housing_results"]),

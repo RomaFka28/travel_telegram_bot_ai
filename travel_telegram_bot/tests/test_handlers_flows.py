@@ -548,3 +548,41 @@ def test_delete_trip_command_removes_archived_trip(tmp_path) -> None:
 
     assert database.get_trip_by_id(int(first_trip["id"])) is None
     assert "удалена навсегда" in delete_message.replies[-1]["text"].lower()
+
+
+def test_summary_shows_entry_requirements_for_international_trip(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    trip_id = database.create_trip(
+        chat_id=608,
+        created_by=1,
+        payload={
+            "title": "Paris • 4 дн.",
+            "destination": "Paris",
+            "origin": "Berlin",
+            "dates_text": "12-15 июня",
+            "days_count": 4,
+            "group_size": 2,
+            "budget_text": "средний",
+            "interests_text": "город, музеи",
+            "notes": "",
+            "source_prompt": "",
+            "context_text": "Европейский city-break",
+            "itinerary_text": "День 1. Прогулка",
+            "logistics_text": "",
+            "stay_text": "",
+            "alternatives_text": "",
+            "budget_breakdown_text": "",
+            "budget_total_text": "нужна проверка цен в EUR",
+            "entry_requirements_text": "Маршрут международный: Германия → Франция.",
+            "status": "active",
+        },
+    )
+    database.set_selected_trip(608, trip_id)
+
+    summary_update, summary_message = make_update(chat_id=608)
+    asyncio.run(handlers.summary_command(summary_update, DummyContext()))
+
+    rendered = summary_message.replies[-1]["text"]
+    assert "Въезд и документы" in rendered
+    assert "Германия" in rendered
+    assert "Франция" in rendered

@@ -1,3 +1,6 @@
+from types import SimpleNamespace
+
+import travel_links
 from travel_links import build_links_map, build_links_text
 
 
@@ -41,3 +44,25 @@ def test_build_links_map_skips_placeholder_destination() -> None:
     )
 
     assert links == {}
+
+
+def test_build_links_text_switches_to_international_sources(monkeypatch) -> None:
+    monkeypatch.setattr(
+        travel_links,
+        "detect_route_locale",
+        lambda destination, origin=None: SimpleNamespace(is_ru_cis_destination=False),
+    )
+
+    links = build_links_text(
+        "Paris",
+        "12-14 июня",
+        "Berlin",
+        context_text="нужны отель, экскурсии, дорога и аренда машины",
+    )
+
+    lowered = links.lower()
+    assert "booking.com" in lowered
+    assert "getyourguide" in lowered
+    assert "rome2rio" in lowered
+    assert "rentalcars" in lowered
+    assert "ostrovok" not in lowered
