@@ -407,6 +407,45 @@ def test_summary_shows_full_multiday_itinerary(tmp_path) -> None:
     assert "День 3." in rendered
 
 
+def test_summary_hides_stale_links_and_context_for_invalid_destination(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    trip_id = database.create_trip(
+        chat_id=521,
+        created_by=1,
+        payload={
+            "title": "- • 7 дн.",
+            "destination": "-",
+            "origin": "не указано",
+            "dates_text": "не указаны",
+            "days_count": 7,
+            "group_size": 1,
+            "budget_text": "эконом",
+            "interests_text": "геи",
+            "notes": "",
+            "source_prompt": "",
+            "context_text": "• Направление: Санкт-Петербург, Россия",
+            "itinerary_text": "День 1. Старый маршрут",
+            "logistics_text": "",
+            "stay_text": "• Базовый выбор: центр",
+            "alternatives_text": "",
+            "budget_breakdown_text": "",
+            "budget_total_text": "26 600 ₽ – 55 400 ₽",
+            "housing_results": '[{\"title\":\"Жильё и размещение: 🏨 Островок\",\"price_text\":\"Откройте ссылку, чтобы увидеть актуальные варианты и цены.\",\"url\":\"https://ostrovok.ru/hotel/search/?q=-\",\"source\":\"Островок\",\"note\":\"Подобрано из обсуждения в чате.\"}]',
+            "status": "active",
+        },
+    )
+    database.set_selected_trip(521, trip_id)
+
+    summary_update, summary_message = make_update(chat_id=521)
+    asyncio.run(handlers.summary_command(summary_update, DummyContext()))
+
+    rendered = summary_message.replies[-1]["text"]
+    assert "Санкт-Петербург, Россия" not in rendered
+    assert "https://ostrovok.ru/hotel/search/?q=-" not in rendered
+    assert "Куда: -" not in rendered
+    assert "Маршрут появится после того" in rendered
+
+
 def test_group_chat_without_destination_asks_short_question(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     context = DummyContext()

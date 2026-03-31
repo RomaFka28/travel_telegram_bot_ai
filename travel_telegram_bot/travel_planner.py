@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
+from value_normalization import normalized_search_value
 
 RUS_MONTH_WORDS = [
     "январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр",
@@ -530,7 +531,7 @@ class TravelPlanner:
         notes: str,
         source_prompt: str = "",
     ) -> TripRequest:
-        destination_clean = (destination or "").strip()
+        destination_clean = normalized_search_value(destination) or ""
         if not destination_clean:
             raise ValueError("Нужно указать направление поездки.")
 
@@ -538,11 +539,11 @@ class TravelPlanner:
         return TripRequest(
             title=(title or f"{destination_clean} • {days_count} дн.").strip(),
             destination=self._display_destination(destination_clean),
-            origin=(origin or "не указано").strip(),
-            dates_text=(dates_text or "не указаны").strip(),
+            origin=normalized_search_value(origin) or "не указано",
+            dates_text=normalized_search_value(dates_text) or "не указаны",
             days_count=max(1, int(days_count or 3)),
             group_size=max(1, int(group_size or 2)),
-            budget_text=(budget_text or "средний").strip(),
+            budget_text=normalized_search_value(budget_text) or "средний",
             interests=interests,
             notes=(notes or "").strip(),
             source_prompt=(source_prompt or notes or f"Поездка в {destination_clean}").strip(),
@@ -836,7 +837,19 @@ class TravelPlanner:
                             break
             round_index += 1
         if len(queue) < target_count:
-            queue.extend(["локальная точка рядом с жильем и свободное время"] * (target_count - len(queue)))
+            filler_options = [
+                "локальная точка рядом с жильем и свободное время",
+                "спокойный гастро-стоп без жёсткого тайминга",
+                "резерв под погоду, отдых или перенос активности",
+                "короткая прогулка по соседнему району",
+                "свободное окно под спонтанные планы группы",
+            ]
+            missing = target_count - len(queue)
+            queue.extend(
+                filler_options[:missing]
+                if missing <= len(filler_options)
+                else (filler_options * ((missing // len(filler_options)) + 1))[:missing]
+            )
         return queue
 
     def _build_logistics_text(self, profile: DestinationProfile, request: TripRequest) -> str:

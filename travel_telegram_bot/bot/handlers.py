@@ -876,7 +876,12 @@ class BotHandlers:
         if not edit_text:
             await message.reply_text("\u041d\u0443\u0436\u0435\u043d \u0442\u0435\u043a\u0441\u0442 \u0437\u0430\u043f\u0440\u043e\u0441\u0430 \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
             return
-        request = self.service._merge_edit_request(trip, edit_text)
+        try:
+            request = self.service._merge_edit_request(trip, edit_text)
+        except ValueError as exc:
+            await message.reply_text(str(exc))
+            await message.reply_text("Подсказка: сначала укажите направление, например: «добавь Казань».")
+            return
         plan = self.planner.generate_plan(request)
         self.db.update_trip_fields(
             int(trip_id),
@@ -1014,13 +1019,13 @@ class BotHandlers:
         try:
             if action in {"going", "interested", "not_going"}:
                 self._set_participant_status(trip_id, update, action)
+                await query.answer(self.formatter.build_status_updated_text(action))
                 if query.message:
                     await query.edit_message_text(
                         text=self.formatter._build_summary_html(trip_id),
                         parse_mode=ParseMode.HTML,
                         reply_markup=participant_status_keyboard(trip_id),
                     )
-                await query.answer(self.formatter.build_status_updated_text(action))
                 self._log_trip_action(
                     "success",
                     action=action,

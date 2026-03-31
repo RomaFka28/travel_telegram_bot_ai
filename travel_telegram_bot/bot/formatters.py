@@ -138,6 +138,10 @@ class TripFormatter:
         ]
         return "\n".join(status_lines), "\n".join(checklist_lines)
 
+    @staticmethod
+    def _has_destination(trip: dict) -> bool:
+        return bool(normalized_search_value(trip.get("destination")))
+
     def build_start_text(self) -> str:
         return (
             "Привет! Добавьте меня в чат поездки, включите авто-анализ в /settings и обсуждайте поездку обычными сообщениями.\n\n"
@@ -256,6 +260,7 @@ class TripFormatter:
         dates_text = normalized_search_value(trip.get("dates_text")) or "уточняется"
         budget_text = normalized_search_value(trip.get("budget_text")) or "не указан"
         readiness_text, checklist_text = self._planning_readiness(trip, int(trip["id"]))
+        has_destination = self._has_destination(trip)
         sections = [
             self._category_section(trip, "flight_results"),
             self._category_section(trip, "housing_results"),
@@ -265,6 +270,11 @@ class TripFormatter:
         ]
         visible_sections = [section for section in sections if section]
         compact_sections = "\n\n".join(visible_sections[:4])
+        direction_block = (
+            html.escape(summary_short)
+            if summary_short and has_destination
+            else "Жду направление поездки, чтобы собрать осмысленный маршрут, жильё и полезные ссылки."
+        )
         return (
             f"🧭 Собрал черновик поездки\n"
             f"Куда: <b>{html.escape(destination)}</b>\n"
@@ -273,9 +283,9 @@ class TripFormatter:
             f"Бюджет: <b>{html.escape(budget_text)}</b>\n"
             + self._detected_needs_line(trip)
             + f"\n\n{readiness_text}\n{html.escape(checklist_text)}"
-            + (f"\n\n<b>Коротко</b>\n{html.escape(summary_short)}" if summary_short else "")
+            + f"\n\n<b>Коротко</b>\n{direction_block}"
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
-            + (f"\n\n{compact_sections}" if compact_sections else "")
+            + (f"\n\n{compact_sections}" if compact_sections and has_destination else "")
             + (f"\n\n<b>Что ещё уточнить</b>\n{html.escape(open_questions)}" if open_questions else "")
             + "\n\nОткройте /summary, если нужен полный план."
         )
@@ -335,9 +345,20 @@ class TripFormatter:
         dates_text = normalized_search_value(trip["dates_text"]) or "не указаны"
         budget_text = normalized_search_value(trip["budget_text"]) or "не указан"
         interests_text = normalized_search_value(trip["interests_text"]) or "не указаны"
-        itinerary_text = self._escape_block(trip["itinerary_text"] or "Маршрут пока не собран.")
-        stay_preview = self._escape_block(self._preview_multiline(trip["stay_text"] or "", max_blocks=1))
-        context_preview = self._escape_block(self._preview_multiline(trip["context_text"] or "", max_blocks=1))
+        has_destination = self._has_destination(trip)
+        itinerary_text = self._escape_block(
+            trip["itinerary_text"] if has_destination else "Маршрут появится после того, как станет понятно направление поездки."
+        )
+        stay_preview = self._escape_block(
+            self._preview_multiline(trip["stay_text"] or "", max_blocks=1)
+            if has_destination
+            else "Подбор жилья начну после того, как определится направление."
+        )
+        context_preview = self._escape_block(
+            self._preview_multiline(trip["context_text"] or "", max_blocks=1)
+            if has_destination
+            else "Направление пока не определено, поэтому блок с контекстом ещё не заполнен."
+        )
         notes_text = self._escape_block(trip["notes"] or "—")
         weather_text = (trip["weather_text"] or "").strip()
         weather_block = f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else ""
@@ -348,11 +369,16 @@ class TripFormatter:
             self._category_section(trip, "transport_results"),
             self._category_section(trip, "rental_results"),
         ]
-        structured_block = "\n\n".join(section for section in sections if section)
+        structured_block = "\n\n".join(section for section in sections if section) if has_destination else ""
         links_text = (trip.get("links_text") or "").strip()
-        links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text and not structured_block else ""
+        links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text and not structured_block and has_destination else ""
         summary_short = (trip.get("summary_short_text") or "").strip()
-        short_block = f"\n\n<b>Быстрый вывод</b>\n{html.escape(summary_short)}" if summary_short else ""
+        short_summary_text = (
+            summary_short
+            if summary_short and has_destination
+            else "Направление пока не определено. Как только появятся город и даты, бот пересоберёт маршрут и ссылки."
+        )
+        short_block = f"\n\n<b>Быстрый вывод</b>\n{html.escape(short_summary_text)}"
         open_questions = (trip.get("open_questions_text") or "").strip()
         open_questions_block = f"\n\n<b>Открытые вопросы</b>\n{html.escape(open_questions)}" if open_questions else ""
         readiness_text, checklist_text = self._planning_readiness(trip, trip_id)
