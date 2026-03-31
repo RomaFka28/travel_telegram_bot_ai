@@ -17,6 +17,7 @@ KNOWN_NON_NAMES = {"не", "да", "ну", "ой", "эй", "все", "там", "
 class ChatSignal:
     has_travel_intent: bool
     destination: str | None
+    origin: str | None
     dates_text: str | None
     participants_mentioned: list[str] = field(default_factory=list)
     budget_hint: str | None = None
@@ -45,6 +46,7 @@ class GroupChatAnalyzer:
         has_intent = any(trigger in normalized for trigger in TRAVEL_TRIGGERS)
 
         destination: str | None = None
+        origin: str | None = None
         dates_text: str | None = None
         budget_hint: str | None = None
         interests: list[str] = []
@@ -52,6 +54,10 @@ class GroupChatAnalyzer:
         if has_intent:
             try:
                 destination = self._planner._extract_destination(text)
+            except Exception:
+                pass
+            try:
+                origin = self._planner._extract_origin(text)
             except Exception:
                 pass
             raw_dates = self._planner._extract_dates(text)
@@ -65,6 +71,7 @@ class GroupChatAnalyzer:
         return ChatSignal(
             has_travel_intent=has_intent,
             destination=destination,
+            origin=origin,
             dates_text=dates_text,
             participants_mentioned=participants,
             budget_hint=budget_hint,

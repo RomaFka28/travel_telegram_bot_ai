@@ -925,6 +925,8 @@ class BotHandlers:
             signal_dest = (signal.destination or "").strip().lower()
             if current_dest and signal_dest and current_dest == signal_dest:
                 updates: dict = {}
+                if signal.origin:
+                    updates["origin"] = signal.origin
                 if signal.dates_text:
                     updates["dates_text"] = signal.dates_text
                 if signal.budget_hint:

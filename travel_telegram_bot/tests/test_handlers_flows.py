@@ -257,6 +257,7 @@ def test_hotels_command_returns_russian_housing_sources(tmp_path) -> None:
 def test_tickets_command_returns_travelpayouts_snapshot(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     handlers.flight_provider = FakeFlightProvider()
+    handlers.service._flight_provider = handlers.flight_provider
     create_update, _ = make_update(chat_id=406)
     create_context = DummyContext(args=["Хочу", "из", "Томска", "в", "Казань", "на", "3", "дня"])
     asyncio.run(handlers.plan_command(create_update, create_context))
@@ -266,6 +267,25 @@ def test_tickets_command_returns_travelpayouts_snapshot(tmp_path) -> None:
 
     assert "Travelpayouts / Aviasales" in tickets_message.replies[-1]["text"]
     assert "12 300" in tickets_message.replies[-1]["text"]
+
+
+def test_group_chat_with_origin_populates_ticket_snapshot(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    handlers.flight_provider = FakeFlightProvider()
+    handlers.service._flight_provider = handlers.flight_provider
+    context = DummyContext()
+
+    update, message = make_update(
+        text="Ребята, летим из Томска в Казань на 3 дня, нас четверо, бюджет средний",
+        chat_id=518,
+    )
+    asyncio.run(handlers.handle_group_message(update, context))
+
+    trip = database.get_active_trip(518)
+    assert trip is not None
+    assert trip["origin"] == "Томска"
+    assert "Travelpayouts / Aviasales" in (trip.get("tickets_text") or "")
+    assert "Билеты" in message.replies[-1]["text"]
 
 
 def test_group_chat_analysis_uses_recent_messages_context(tmp_path) -> None:

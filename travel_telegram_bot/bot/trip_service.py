@@ -138,7 +138,7 @@ class TripService:
         request = self._planner.build_request_from_fields(
             title=f"{signal.destination} • 3 дн. • 2 чел.",
             destination=signal.destination,
-            origin="не указано",
+            origin=signal.origin or "не указано",
             dates_text=signal.dates_text or "не указаны",
             days_count=3,
             group_size=max(2, len(signal.participants_mentioned)) if signal.participants_mentioned else 2,
