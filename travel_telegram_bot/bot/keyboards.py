@@ -18,6 +18,11 @@ def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="❌ Не еду", callback_data=f"tripaction:{trip_id}:not_going"),
         ],
         [
+            InlineKeyboardButton(text="🗺 Маршрут", callback_data=f"tripaction:{trip_id}:show_route"),
+            InlineKeyboardButton(text="🎫 Билеты", callback_data=f"tripaction:{trip_id}:show_tickets"),
+            InlineKeyboardButton(text="🏨 Жильё", callback_data=f"tripaction:{trip_id}:show_housing"),
+        ],
+        [
             InlineKeyboardButton(text="✏️ Изменить", callback_data=f"tripaction:{trip_id}:edit"),
             InlineKeyboardButton(text="🗑 Удалить", callback_data=f"tripaction:{trip_id}:delete_confirm"),
         ],

@@ -660,3 +660,31 @@ def test_travelpayouts_detects_one_way_text() -> None:
     assert TravelpayoutsFlightProvider._is_one_way("Нужен билет в одну сторону", "12 июня") is True
     assert TravelpayoutsFlightProvider._is_one_way("Без обратного билета", "12 июня") is True
     assert TravelpayoutsFlightProvider._is_one_way("Туда 12 июня, обратно 18 июня", "12-18 июня") is False
+
+
+def test_trip_action_buttons_open_route_tickets_and_housing(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    handlers.flight_provider = FakeFlightProvider()
+    handlers.service._flight_provider = handlers.flight_provider
+    create_update, _ = make_update(chat_id=1601)
+    asyncio.run(
+        handlers.plan_command(
+            create_update,
+            DummyContext(args=["Хочу", "в", "Казань", "из", "Томска", "на", "3", "дня", "нужен", "отель"]),
+        )
+    )
+    trip = database.get_active_trip(1601)
+    assert trip is not None
+
+    for action, expected in [
+        ("show_route", "Маршрут по дням"),
+        ("show_tickets", "Билеты"),
+        ("show_housing", "Жильё"),
+    ]:
+        callback_update, callback_message, query = make_callback_update(
+            data=f"tripaction:{int(trip['id'])}:{action}",
+            chat_id=1601,
+        )
+        asyncio.run(handlers.trip_action_callback(callback_update, DummyContext()))
+        assert expected in callback_message.replies[-1]["text"]
+        assert query.answers[-1]["text"] is not None

@@ -1136,6 +1136,33 @@ class BotHandlers:
                 )
                 return
 
+            if action == "show_route":
+                await query.answer("Открываю маршрут.")
+                if query.message:
+                    await query.message.reply_text(
+                        self.formatter.build_route_section_text(trip_id),
+                        parse_mode=ParseMode.HTML,
+                    )
+                return
+
+            if action == "show_tickets":
+                await query.answer("Открываю билеты.")
+                if query.message:
+                    await query.message.reply_text(
+                        self.formatter.build_tickets_section_text(trip_id),
+                        parse_mode=ParseMode.HTML,
+                    )
+                return
+
+            if action == "show_housing":
+                await query.answer("Открываю жильё.")
+                if query.message:
+                    await query.message.reply_text(
+                        self.formatter.build_housing_section_text(trip_id),
+                        parse_mode=ParseMode.HTML,
+                    )
+                return
+
             if action == "edit":
                 context.user_data["edit_trip_id"] = trip_id
                 if query.message:

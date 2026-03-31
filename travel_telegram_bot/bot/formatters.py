@@ -343,6 +343,36 @@ class TripFormatter:
             lines.append("Пока не нашёл вариантов, попробуйте позже или откройте /summary.")
         return "\n".join(lines)
 
+    def build_route_section_text(self, trip_id: int) -> str:
+        trip = self._db.get_trip_by_id(trip_id)
+        if not trip:
+            return "<b>Поездка не найдена.</b>"
+        return (
+            "<b>Маршрут по дням</b>\n"
+            f"{html.escape(trip['itinerary_text'] or 'Маршрут пока не собран.')}"
+        )
+
+    def build_tickets_section_text(self, trip_id: int) -> str:
+        trip = self._db.get_trip_by_id(trip_id)
+        if not trip:
+            return "<b>Поездка не найдена.</b>"
+        section = self._category_section(trip, "flight_results")
+        if section:
+            return section
+        tickets_text = (trip.get("tickets_text") or "").strip()
+        if tickets_text:
+            return f"<b>Билеты</b>\n{html.escape(tickets_text)}"
+        return "<b>Билеты</b>\nПока нет данных по билетам. Уточните город вылета и даты."
+
+    def build_housing_section_text(self, trip_id: int) -> str:
+        trip = self._db.get_trip_by_id(trip_id)
+        if not trip:
+            return "<b>Поездка не найдена.</b>"
+        section = self._category_section(trip, "housing_results")
+        if section:
+            return section
+        return "<b>Жильё</b>\nПока нет данных по жилью. Уточните направление и даты."
+
     def _build_brief_html(self, trip_id: int) -> str:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:

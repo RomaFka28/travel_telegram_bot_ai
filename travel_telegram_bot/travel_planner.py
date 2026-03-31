@@ -689,6 +689,11 @@ class TravelPlanner:
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
                 return max(1, min(int(match.group(1)), 20))
+        if (
+            any(token in lowered for token in ("хочу", "поеду", "лечу", "еду", "собираюсь", "планирую"))
+            and not any(token in lowered for token in ("мы", "нас ", "с друзьями", "с семь", "вдвоем", "втроем"))
+        ):
+            return 1
         return 2
 
     @staticmethod
@@ -732,6 +737,19 @@ class TravelPlanner:
 
     def _extract_budget(self, text: str) -> str:
         lowered = text.lower()
+        if any(
+            phrase in lowered
+            for phrase in (
+                "не ограничен",
+                "не ограничена",
+                "не ограничены",
+                "без ограничений",
+                "бюджет не важен",
+                "любой бюджет",
+                "без лимита",
+            )
+        ):
+            return "не ограничен"
         range_match = re.search(
             r"\b(?:Ð±ÑŽÐ´Ð¶ÐµÑ‚|Ð´Ð¾|Ð¿Ñ€Ð¸Ð¼ÐµÑ€Ð½Ð¾|Ð¾ÐºÐ¾Ð»Ð¾)\s+([\d\s]+(?:Ðº|Ñ‚Ñ‹Ñ|Ñ‚Ñ‹ÑÑÑ‡|Ñ€ÑƒÐ±|â‚½|â‚¬|\$)?)",
             lowered,
@@ -757,6 +775,11 @@ class TravelPlanner:
 
     def _detect_budget_level(self, budget_text: str) -> str:
         lowered = (budget_text or "").lower()
+        if any(
+            phrase in lowered
+            for phrase in ("не ограничен", "не ограничена", "не ограничены", "без ограничений", "любой бюджет", "без лимита")
+        ):
+            return tuple(BUDGET_HINTS.keys())[-1]
         for label, keywords in BUDGET_HINTS.items():
             if any(keyword in lowered for keyword in keywords):
                 return label

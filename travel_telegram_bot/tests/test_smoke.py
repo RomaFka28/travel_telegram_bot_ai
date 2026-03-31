@@ -114,3 +114,10 @@ def test_participant_names_exclude_cities():
     signal = GroupChatAnalyzer().analyze("Миша предлагает поехать во Владивосток.")
     assert "Владивосток" not in signal.participants_mentioned
     assert "Миша" in signal.participants_mentioned
+
+def test_planner_understands_single_traveler_and_unlimited_budget():
+    planner = TravelPlanner()
+    request = planner.parse_trip_request("???? ? ??? ?? ?????? ?? 7 ????, ?????? ?? ?????????")
+
+    assert request.group_size == 1
+    assert request.budget_text == "?? ?????????"
