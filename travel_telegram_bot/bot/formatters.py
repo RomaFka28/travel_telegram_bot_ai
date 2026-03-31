@@ -210,6 +210,7 @@ class TripFormatter:
             self._category_section(trip, "rental_results"),
         ]
         visible_sections = [section for section in sections if section]
+        compact_sections = "\n\n".join(visible_sections[:4])
         return (
             f"🧭 Собрал черновик поездки\n"
             f"Куда: <b>{html.escape(trip['destination'] or 'не указано')}</b>\n"
@@ -219,7 +220,7 @@ class TripFormatter:
             + self._detected_needs_line(trip)
             + (f"\n\n<b>Коротко</b>\n{html.escape(summary_short)}" if summary_short else "")
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
-            + (f"\n\n{visible_sections[0]}" if visible_sections else "")
+            + (f"\n\n{compact_sections}" if compact_sections else "")
             + (f"\n\n<b>Что ещё уточнить</b>\n{html.escape(open_questions)}" if open_questions else "")
             + "\n\nОткройте /summary, если нужен полный план."
         )

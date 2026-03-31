@@ -113,6 +113,8 @@ class TripService:
 
     def _build_open_questions(self, request, detected_needs: list[str], structured_results: dict[str, list[TravelSearchResult]]) -> str:
         questions: list[str] = []
+        normalized_interests = (request.interests_text or "").strip().lower()
+        has_specific_interests = normalized_interests not in {"", "не указаны", "не указано"}
         if not request.destination or request.destination == "не указано":
             questions.append("Уточнить направление поездки.")
         if not request.dates_text or request.dates_text == "не указаны":
@@ -127,7 +129,7 @@ class TripService:
             questions.append("Понять, нужен ли байк/скутер всем или только части группы.")
         if "road" in detected_needs and not request.dates_text:
             questions.append("Подтвердить день выезда, чтобы подобрать дорогу без лишних пересадок.")
-        if "excursions" in detected_needs and not request.interests_text:
+        if "excursions" in detected_needs and not has_specific_interests:
             questions.append("Выбрать тип экскурсий: прогулки, музеи, гастро или природа.")
 
         raw_text = f"{request.source_prompt}\n{request.notes}"

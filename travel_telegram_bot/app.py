@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import logging
 
@@ -48,7 +48,6 @@ async def post_init(application) -> None:
         BotCommand("select_trip", "Вернуть поездку из истории"),
         BotCommand("plan", "Создать поездку вручную"),
         BotCommand("newtrip", "Пошаговое создание поездки"),
-        BotCommand("share", "Поделиться текущим планом"),
         BotCommand("hotels", "Где искать жильё и варианты"),
         BotCommand("participants", "Статусы участников"),
         BotCommand("adddate", "Добавить вариант дат"),
@@ -123,7 +122,6 @@ def build_application():
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_command))
     app.add_handler(CommandHandler("tickets", handlers.tickets_command))
-    app.add_handler(CommandHandler("share", handlers.share_command))
     app.add_handler(CommandHandler("hotels", handlers.hotels_command))
     app.add_handler(CommandHandler("plan", handlers.plan_command))
     app.add_handler(CommandHandler("planai", handlers.plan_ai_command))

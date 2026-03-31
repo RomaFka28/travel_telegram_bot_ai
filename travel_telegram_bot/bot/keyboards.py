@@ -18,7 +18,6 @@ def participant_status_keyboard(trip_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="❌ Не еду", callback_data=f"tripaction:{trip_id}:not_going"),
         ],
         [
-            InlineKeyboardButton(text="🔗 Поделиться", callback_data=f"tripaction:{trip_id}:share"),
             InlineKeyboardButton(text="✏️ Изменить", callback_data=f"tripaction:{trip_id}:edit"),
         ],
     ]

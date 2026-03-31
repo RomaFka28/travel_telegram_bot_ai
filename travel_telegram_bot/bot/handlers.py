@@ -116,13 +116,14 @@ class BotHandlers:
             status=status,
         )
 
-    def _remember_chat_member(self, update: Update) -> None:
+    def _remember_chat_member(self, update: Update, *, chat_id: int | None = None) -> None:
         chat = update.effective_chat
         user = update.effective_user
-        if not chat or not user:
+        target_chat_id = chat_id if chat_id is not None else (chat.id if chat else None)
+        if target_chat_id is None or not user:
             return
         self.db.upsert_chat_member(
-            chat_id=chat.id,
+            chat_id=target_chat_id,
             user_id=user.id,
             username=user.username,
             full_name=self._display_name(update),
@@ -404,25 +405,6 @@ class BotHandlers:
         if not message:
             return
         self._remember_chat_member(update)
-        chat = update.effective_chat
-        if context.args and chat:
-            raw_payload = (context.args[0] or "").strip()
-            if raw_payload.startswith("trip_"):
-                token = raw_payload.removeprefix("trip_")
-                trip = self.db.get_trip_by_share_token(token)
-                if not trip or trip.get("status") != "active":
-                    await message.reply_text("Эта ссылка уже неактуальна или план не найден.")
-                    return
-                self.db.set_selected_trip(chat.id, int(trip["id"]))
-                await message.reply_text(
-                    "План открыт. Ниже текущая карточка поездки, можно смотреть детали и отмечать участие."
-                )
-                await message.reply_text(
-                    self.formatter._build_summary_html(int(trip["id"])),
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=participant_status_keyboard(int(trip["id"])),
-                )
-                return
         await message.reply_text(self.formatter.build_start_text())
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -437,6 +419,7 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         if not self.flight_provider or not self.flight_provider.enabled:
             await update.effective_message.reply_text(
                 "Travelpayouts пока не подключён. Добавьте TRAVELPAYOUTS_API_KEY в Render, и я смогу подтягивать цены на билеты."
@@ -454,23 +437,6 @@ class BotHandlers:
         self.db.update_trip_fields(int(trip["id"]), {"tickets_text": tickets_text})
         await update.effective_message.reply_text(tickets_text)
 
-    async def share_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        self._remember_chat_member(update)
-        trip = await self._get_active_trip_or_reply(update)
-        message = update.effective_message
-        if not trip or not message:
-            return
-        username = context.bot.username
-        if not username:
-            await message.reply_text("Не удалось получить username бота для ссылки. Попробуйте чуть позже.")
-            return
-        token = self.db.create_share_token(int(trip["id"]), update.effective_user.id if update.effective_user else None)
-        share_link = f"https://t.me/{username}?start=trip_{token}"
-        await message.reply_text(
-            "Отправьте эту ссылку другим участникам. По ней откроется текущий план и можно будет отметить участие:\n"
-            f"{share_link}"
-        )
-
     async def hotels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
         trip = await self._get_active_trip_or_reply(update)
@@ -478,6 +444,7 @@ class BotHandlers:
         if not trip or not message:
             return
         await message.reply_text("Ищу варианты и русские сценарии по жилью. Это может занять несколько секунд.")
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         response = await self.housing_provider.search(
             destination=trip["destination"] or "",
             dates_text=trip["dates_text"] or "",
@@ -518,6 +485,9 @@ class BotHandlers:
             await message.reply_text("Не удалось сделать поездку активной. Проверьте ID через /trips.")
             return
 
+        trip = self.db.get_trip_by_id(trip_id)
+        if trip:
+            self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         await message.reply_text(f"Поездка {trip_id} снова активна.")
         await message.reply_text(
             self.formatter._build_summary_html(trip_id),
@@ -761,6 +731,7 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         if not (trip["weather_text"] or "").strip():
             self.service._refresh_weather_for_trip(int(trip["id"]))
         await update.effective_message.reply_text(
@@ -834,6 +805,7 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         await update.effective_message.reply_text(
             self.formatter.build_participants_text(int(trip["id"])),
             parse_mode=ParseMode.HTML,
@@ -844,6 +816,7 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         normalized_status = self._normalize_status(" ".join(context.args)) if context.args else None
         if normalized_status:
             self._set_participant_status(int(trip["id"]), update, normalized_status)
@@ -879,6 +852,7 @@ class BotHandlers:
         if not trip or trip["status"] != "active":
             await message.reply_text("\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u043f\u043b\u0430\u043d \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d.")
             return
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         edit_text = (message.text or "").strip()
         if not edit_text:
             await message.reply_text("\u041d\u0443\u0436\u0435\u043d \u0442\u0435\u043a\u0441\u0442 \u0437\u0430\u043f\u0440\u043e\u0441\u0430 \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
@@ -1005,6 +979,7 @@ class BotHandlers:
             await query.answer("\u042d\u0442\u0430 \u043f\u043e\u0435\u0437\u0434\u043a\u0430 \u0443\u0436\u0435 \u043d\u0435\u0430\u043a\u0442\u0438\u0432\u043d\u0430.", show_alert=True)
             return
 
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         user = query.from_user
         chat = update.effective_chat
         self._log_trip_action(
@@ -1037,25 +1012,6 @@ class BotHandlers:
                 )
                 return
 
-            if action == "share":
-                username = context.bot.username
-                if not username:
-                    await query.answer("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u043e\u043b\u0443\u0447\u0438\u0442\u044c \u0441\u0441\u044b\u043b\u043a\u0443.", show_alert=True)
-                    return
-                token = self.db.create_share_token(trip_id, user.id)
-                share_link = f"https://t.me/{username}?start=trip_{token}"
-                if query.message:
-                    await query.message.reply_text(f"\u0421\u0441\u044b\u043b\u043a\u0430 \u0434\u043b\u044f \u043f\u0440\u0438\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u044f:\n{share_link}")
-                await query.answer("\u0421\u0441\u044b\u043b\u043a\u0443 \u043e\u0442\u043f\u0440\u0430\u0432\u0438\u043b \u0432 \u0447\u0430\u0442.")
-                self._log_trip_action(
-                    "success",
-                    action=action,
-                    trip_id=trip_id,
-                    user_id=user.id,
-                    chat_id=chat.id if chat else None,
-                    elapsed_ms=int((time.perf_counter() - started_at) * 1000),
-                )
-                return
 
             if action == "edit":
                 context.user_data["edit_trip_id"] = trip_id

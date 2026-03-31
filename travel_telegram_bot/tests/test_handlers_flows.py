@@ -231,15 +231,11 @@ def test_settings_toggle_can_disable_group_autodraft(tmp_path) -> None:
     assert group_message.replies == []
 
 
-def test_share_and_archive_keep_trip_history(tmp_path) -> None:
+def test_archive_keeps_trip_history(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     create_update, _ = make_update(chat_id=404)
     create_context = DummyContext(args=["Хочу", "в", "Питер", "на", "3", "дня"])
     asyncio.run(handlers.plan_command(create_update, create_context))
-
-    share_update, share_message = make_update(chat_id=404)
-    asyncio.run(handlers.share_command(share_update, DummyContext()))
-    assert "https://t.me/demo_trip_bot?start=trip_" in share_message.replies[-1]["text"]
 
     archive_update, archive_message = make_update(chat_id=404)
     asyncio.run(handlers.archive_trip_command(archive_update, DummyContext()))
@@ -249,6 +245,23 @@ def test_share_and_archive_keep_trip_history(tmp_path) -> None:
     assert len(all_trips) == 1
     assert all_trips[0]["status"] == "archived"
     assert "История сохранена" in archive_message.replies[-1]["text"]
+
+
+def test_group_autodraft_reply_shows_multiple_detected_categories(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+
+    update, message = make_update(
+        text="Летим из Томска в Казань, нужен отель, экскурсии и поезд обратно тоже посмотрим",
+        chat_id=1404,
+    )
+    asyncio.run(handlers.handle_group_message(update, context))
+
+    rendered = message.replies[-1]["text"]
+    assert "Билеты" in rendered
+    assert "Жильё" in rendered
+    assert "Экскурсии" in rendered
+    assert "Дорога" in rendered
 
 
 def test_hotels_command_returns_russian_housing_sources(tmp_path) -> None:

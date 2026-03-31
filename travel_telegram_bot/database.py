@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import secrets
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -182,15 +181,6 @@ class Database:
                     UNIQUE(option_id, user_id),
                     FOREIGN KEY (option_id) REFERENCES date_options(id) ON DELETE CASCADE
                 );
-
-                CREATE TABLE IF NOT EXISTS trip_links (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    token TEXT NOT NULL UNIQUE,
-                    trip_id INTEGER NOT NULL,
-                    created_by INTEGER,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY (trip_id) REFERENCES trips(id) ON DELETE CASCADE
-                );
                 """
             )
             existing_columns = self._sqlite_table_columns(conn, "trips")
@@ -279,17 +269,6 @@ class Database:
                         user_id BIGINT NOT NULL,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                         UNIQUE (option_id, user_id)
-                    )
-                    """
-                )
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS trip_links (
-                        id BIGSERIAL PRIMARY KEY,
-                        token TEXT NOT NULL UNIQUE,
-                        trip_id BIGINT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
-                        created_by BIGINT,
-                        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )
                     """
                 )
@@ -448,53 +427,6 @@ class Database:
         if not selected_trip_id:
             return None
         return self.get_trip_by_id(int(selected_trip_id))
-
-    def create_share_token(self, trip_id: int, created_by: int | None) -> str:
-        if self.is_postgres:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT token FROM trip_links WHERE trip_id = %s ORDER BY id ASC LIMIT 1",
-                        (trip_id,),
-                    )
-                    existing = cur.fetchone()
-                    if existing:
-                        return str(existing["token"])
-
-                    token = secrets.token_urlsafe(8)
-                    cur.execute(
-                        "INSERT INTO trip_links(token, trip_id, created_by) VALUES (%s, %s, %s)",
-                        (token, trip_id, created_by),
-                    )
-                    return token
-
-        with self._connect() as conn:
-            existing = conn.execute(
-                "SELECT token FROM trip_links WHERE trip_id = ? ORDER BY id ASC LIMIT 1",
-                (trip_id,),
-            ).fetchone()
-            if existing:
-                return str(existing["token"])
-
-            token = secrets.token_urlsafe(8)
-            conn.execute(
-                "INSERT INTO trip_links(token, trip_id, created_by) VALUES (?, ?, ?)",
-                (token, trip_id, created_by),
-            )
-            return token
-
-    def get_trip_by_share_token(self, token: str) -> dict[str, Any] | None:
-        rows = self._q(
-            """
-            SELECT t.*
-            FROM trip_links l
-            JOIN trips t ON t.id = l.trip_id
-            WHERE l.token = ?
-            LIMIT 1
-            """,
-            (token,),
-        )
-        return rows[0] if rows else None
 
     def get_active_trip(self, chat_id: int) -> dict[str, Any] | None:
         rows = self._q(
