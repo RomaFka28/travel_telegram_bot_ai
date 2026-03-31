@@ -39,6 +39,7 @@ TRIP_COLUMNS: dict[str, str] = {
     "rental_results": "TEXT",
     "detected_needs": "TEXT",
     "results_updated_at": "TEXT",
+    "open_questions_text": "TEXT",
     "status": "TEXT NOT NULL DEFAULT 'active'",
     "created_by": "BIGINT",
     "created_at": "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP",
@@ -81,6 +82,7 @@ EDITABLE_TRIP_FIELDS = {
     "rental_results",
     "detected_needs",
     "results_updated_at",
+    "open_questions_text",
     "status",
 }
 
@@ -151,6 +153,16 @@ class Database:
                     reminders_enabled INTEGER NOT NULL DEFAULT 1,
                     autodraft_enabled INTEGER NOT NULL DEFAULT 1,
                     selected_trip_id INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS chat_members (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id INTEGER NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    username TEXT,
+                    full_name TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(chat_id, user_id)
                 );
 
                 CREATE TABLE IF NOT EXISTS date_options (
@@ -227,11 +239,24 @@ class Database:
                 )
                 cur.execute(
                     """
-                    CREATE TABLE IF NOT EXISTS chat_settings (
-                        chat_id BIGINT PRIMARY KEY,
-                        reminders_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                        autodraft_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-                        selected_trip_id BIGINT
+                CREATE TABLE IF NOT EXISTS chat_settings (
+                    chat_id BIGINT PRIMARY KEY,
+                    reminders_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    autodraft_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    selected_trip_id BIGINT
+                )
+                """
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS chat_members (
+                        id BIGSERIAL PRIMARY KEY,
+                        chat_id BIGINT NOT NULL,
+                        user_id BIGINT NOT NULL,
+                        username TEXT,
+                        full_name TEXT NOT NULL,
+                        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (chat_id, user_id)
                     )
                     """
                 )
@@ -659,6 +684,49 @@ class Database:
                 (trip_id,),
             )
         return rows or []
+
+    def upsert_chat_member(
+        self,
+        chat_id: int,
+        user_id: int,
+        username: str | None,
+        full_name: str,
+    ) -> None:
+        params = (chat_id, user_id, username or "", full_name)
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO chat_members(chat_id, user_id, username, full_name)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT(chat_id, user_id)
+                        DO UPDATE SET
+                            username = EXCLUDED.username,
+                            full_name = EXCLUDED.full_name,
+                            last_seen_at = CURRENT_TIMESTAMP
+                        """,
+                        params,
+                    )
+            return
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO chat_members(chat_id, user_id, username, full_name)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(chat_id, user_id)
+                DO UPDATE SET
+                    username = excluded.username,
+                    full_name = excluded.full_name,
+                    last_seen_at = CURRENT_TIMESTAMP
+                """,
+                params,
+            )
+
+    def count_chat_members(self, chat_id: int) -> int:
+        rows = self._q("SELECT COUNT(*) AS total FROM chat_members WHERE chat_id = ?", (chat_id,))
+        return int(rows[0]["total"]) if rows else 0
 
     def add_date_option(self, trip_id: int, label: str, created_by: int) -> int:
         if self.is_postgres:

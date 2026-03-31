@@ -116,6 +116,18 @@ class BotHandlers:
             status=status,
         )
 
+    def _remember_chat_member(self, update: Update) -> None:
+        chat = update.effective_chat
+        user = update.effective_user
+        if not chat or not user:
+            return
+        self.db.upsert_chat_member(
+            chat_id=chat.id,
+            user_id=user.id,
+            username=user.username,
+            full_name=self._display_name(update),
+        )
+
     @staticmethod
     def _should_send_group_reply(context: ContextTypes.DEFAULT_TYPE, key: str, *, cooldown_seconds: int) -> bool:
         now = time.time()
@@ -391,6 +403,7 @@ class BotHandlers:
         message = update.effective_message
         if not message:
             return
+        self._remember_chat_member(update)
         chat = update.effective_chat
         if context.args and chat:
             raw_payload = (context.args[0] or "").strip()
@@ -413,12 +426,14 @@ class BotHandlers:
         await message.reply_text(self.formatter.build_start_text())
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         await update.effective_message.reply_text(
             self.formatter.build_help_text(),
             parse_mode=ParseMode.HTML,
         )
 
     async def tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
@@ -440,6 +455,7 @@ class BotHandlers:
         await update.effective_message.reply_text(tickets_text)
 
     async def share_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         trip = await self._get_active_trip_or_reply(update)
         message = update.effective_message
         if not trip or not message:
@@ -456,6 +472,7 @@ class BotHandlers:
         )
 
     async def hotels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         trip = await self._get_active_trip_or_reply(update)
         message = update.effective_message
         if not trip or not message:
@@ -472,6 +489,7 @@ class BotHandlers:
         )
 
     async def trips_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         chat = update.effective_chat
         if not chat:
             return
@@ -481,6 +499,7 @@ class BotHandlers:
         )
 
     async def select_trip_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         chat = update.effective_chat
         message = update.effective_message
         if not chat or not message:
@@ -507,6 +526,7 @@ class BotHandlers:
         )
 
     async def plan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         if not context.args:
             await update.effective_message.reply_text(
                 "Использование:\n"
@@ -810,12 +830,9 @@ class BotHandlers:
         )
 
     async def participants_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
-            return
-        participants = self.db.list_participants(int(trip["id"]))
-        if not participants:
-            await update.effective_message.reply_text("Пока никто не отметил статус. Используй /status.")
             return
         await update.effective_message.reply_text(
             self.formatter.build_participants_text(int(trip["id"])),
@@ -823,6 +840,7 @@ class BotHandlers:
         )
 
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
@@ -892,6 +910,7 @@ class BotHandlers:
         chat = update.effective_chat
         if not message or not chat:
             return
+        self._remember_chat_member(update)
         settings = self.db.get_or_create_settings(chat.id)
         if not self._bool_from_db(settings.get("autodraft_enabled")):
             return
@@ -972,6 +991,7 @@ class BotHandlers:
         query = update.callback_query
         if not query or not query.from_user:
             return
+        self._remember_chat_member(update)
         started_at = time.perf_counter()
         try:
             _, trip_id_raw, action = (query.data or "").split(":", 2)
@@ -1166,6 +1186,7 @@ class BotHandlers:
         await update.effective_message.reply_text("Заметки обновлены.")
 
     async def settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         chat = update.effective_chat
         if not chat:
             return
@@ -1179,6 +1200,7 @@ class BotHandlers:
         )
 
     async def settings_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         query = update.callback_query
         chat = update.effective_chat
         if not query or not chat:

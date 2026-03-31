@@ -120,3 +120,14 @@ def test_trip_schema_keeps_structured_result_columns(tmp_path) -> None:
     assert "Тест" in (trip["flight_results"] or "")
     assert "housing" in (trip["detected_needs"] or "")
     assert trip["summary_short_text"] == "Куда: Казань"
+
+
+def test_chat_member_tracking_counts_known_people(tmp_path) -> None:
+    database = Database(str(tmp_path / "members.db"))
+    database.init_db()
+
+    database.upsert_chat_member(chat_id=15, user_id=1, username="u1", full_name="User One")
+    database.upsert_chat_member(chat_id=15, user_id=2, username="u2", full_name="User Two")
+    database.upsert_chat_member(chat_id=15, user_id=1, username="u1", full_name="User One")
+
+    assert database.count_chat_members(15) == 2

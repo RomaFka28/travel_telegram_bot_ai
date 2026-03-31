@@ -111,6 +111,33 @@ class TripService:
             "rental_results": rental_results,
         }, tickets_text, links_text
 
+    def _build_open_questions(self, request, detected_needs: list[str], structured_results: dict[str, list[TravelSearchResult]]) -> str:
+        questions: list[str] = []
+        if not request.destination or request.destination == "не указано":
+            questions.append("Уточнить направление поездки.")
+        if not request.dates_text or request.dates_text == "не указаны":
+            questions.append("Выбрать точные даты, чтобы собрать жильё и дорогу точнее.")
+        if "tickets" in detected_needs and (not request.origin or request.origin == "не указано"):
+            questions.append("Уточнить город вылета для билетов.")
+        if "housing" in detected_needs and not structured_results["housing_results"]:
+            questions.append("Подтвердить формат жилья: отель, квартира или дом.")
+        if "car_rental" in detected_needs:
+            questions.append("Нужна ли аренда авто на все дни или только на 1 день.")
+        if "bike_rental" in detected_needs:
+            questions.append("Понять, нужен ли байк/скутер всем или только части группы.")
+        if "road" in detected_needs and not request.dates_text:
+            questions.append("Подтвердить день выезда, чтобы подобрать дорогу без лишних пересадок.")
+        if "excursions" in detected_needs and not request.interests_text:
+            questions.append("Выбрать тип экскурсий: прогулки, музеи, гастро или природа.")
+
+        raw_text = f"{request.source_prompt}\n{request.notes}"
+        for line in raw_text.splitlines():
+            cleaned = line.strip()
+            if "?" in cleaned and cleaned not in questions:
+                questions.append(cleaned)
+
+        return "\n".join(f"• {question}" for question in questions[:6])
+
     def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
         notes = request.notes if notes_override is None else notes_override
         effective_request = self._planner.build_request_from_fields(
@@ -154,6 +181,7 @@ class TripService:
             "rental_results": serialize_results(structured_results["rental_results"]),
             "detected_needs": serialize_needs(detected_needs),
             "results_updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "open_questions_text": self._build_open_questions(effective_request, detected_needs, structured_results),
             "status": "active",
         }
 

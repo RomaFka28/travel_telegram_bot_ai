@@ -13,8 +13,13 @@ class TripFormatter:
         self._db = database
 
     def _participant_lines(self, trip_id: int) -> list[str]:
+        trip = self._db.get_trip_by_id(trip_id)
         participants = self._db.list_participants(trip_id)
+        known_members = self._db.count_chat_members(int(trip["chat_id"])) if trip else 0
+        responded = len(participants)
         if not participants:
+            if known_members:
+                return [f"⏳ Пока никто не отметил статус. Прогресс: 0/{known_members}."]
             return ["⏳ Пока никто не отметил статус."]
 
         labels = {
@@ -22,7 +27,7 @@ class TripFormatter:
             "interested": "🤔 Думают",
             "not_going": "❌ Не едут",
         }
-        lines: list[str] = []
+        lines: list[str] = [f"Прогресс ответов: <b>{responded}/{max(known_members, responded)}</b>"]
         for status in ("going", "interested", "not_going"):
             names = [participant["full_name"] for participant in participants if participant["status"] == status]
             if names:
@@ -196,6 +201,7 @@ class TripFormatter:
     def build_group_autodraft_reply(self, trip: dict) -> str:
         weather_text = (trip.get("weather_text") or "").strip()
         summary_short = (trip.get("summary_short_text") or "").strip()
+        open_questions = (trip.get("open_questions_text") or "").strip()
         sections = [
             self._category_section(trip, "flight_results"),
             self._category_section(trip, "housing_results"),
@@ -214,6 +220,7 @@ class TripFormatter:
             + (f"\n\n<b>Коротко</b>\n{html.escape(summary_short)}" if summary_short else "")
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
             + (f"\n\n{visible_sections[0]}" if visible_sections else "")
+            + (f"\n\n<b>Что ещё уточнить</b>\n{html.escape(open_questions)}" if open_questions else "")
             + "\n\nОткройте /summary, если нужен полный план."
         )
 
@@ -279,6 +286,8 @@ class TripFormatter:
         links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text and not structured_block else ""
         summary_short = (trip.get("summary_short_text") or "").strip()
         short_block = f"\n\n<b>Быстрый вывод</b>\n{html.escape(summary_short)}" if summary_short else ""
+        open_questions = (trip.get("open_questions_text") or "").strip()
+        open_questions_block = f"\n\n<b>Открытые вопросы</b>\n{html.escape(open_questions)}" if open_questions else ""
 
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
@@ -302,7 +311,8 @@ class TripFormatter:
             + "<b>Варианты дат</b>\n"
             + "\n".join(self._date_lines(trip_id))
             + "\n\n"
-            + f"<b>Заметки / открытые вопросы</b>\n{notes_text}"
+            + f"<b>Заметки</b>\n{notes_text}"
+            + open_questions_block
             + (f"\n\n{structured_block}" if structured_block else "")
             + links_block
             + weather_block
