@@ -31,6 +31,7 @@ from database import Database
 from health_server import start_if_render
 from housing_search import build_housing_provider
 from llm_travel_planner import LLMPlannerSettings, LLMTravelPlanner
+from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 
 
@@ -39,6 +40,7 @@ async def post_init(application) -> None:
         BotCommand("start", "Как пользоваться ботом в чате"),
         BotCommand("help", "Короткая справка"),
         BotCommand("summary", "Текущий план поездки"),
+        BotCommand("tickets", "Цены на билеты и оценка"),
         BotCommand("status", "Отметить участие"),
         BotCommand("settings", "Авто-анализ и режим чата"),
         BotCommand("trips", "История поездок"),
@@ -76,12 +78,13 @@ def build_application():
     else:
         planner = TravelPlanner()
     formatter = TripFormatter(database)
-    service = TripService(database, planner)
+    flight_provider = TravelpayoutsFlightProvider(settings.travelpayouts_api_key)
+    service = TripService(database, planner, flight_provider)
     housing_provider = build_housing_provider(
         playwright_enabled=settings.playwright_enabled,
         timeout_ms=settings.playwright_timeout_ms,
     )
-    handlers = BotHandlers(database, planner, formatter, service, housing_provider)
+    handlers = BotHandlers(database, planner, formatter, service, housing_provider, flight_provider)
 
     app = (
         ApplicationBuilder()
@@ -111,6 +114,7 @@ def build_application():
     app.add_handler(new_trip_conversation)
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("help", handlers.help_command))
+    app.add_handler(CommandHandler("tickets", handlers.tickets_command))
     app.add_handler(CommandHandler("share", handlers.share_command))
     app.add_handler(CommandHandler("hotels", handlers.hotels_command))
     app.add_handler(CommandHandler("plan", handlers.plan_command))

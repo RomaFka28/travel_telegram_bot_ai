@@ -110,6 +110,16 @@ def build_handlers(tmp_path) -> tuple[Database, BotHandlers]:
     return database, BotHandlers(database, planner, formatter, service, housing_provider)
 
 
+class FakeFlightProvider:
+    enabled = True
+
+    def build_ticket_snapshot(self, *, origin: str, destination: str, dates_text: str, budget_text: str, group_size: int) -> str:
+        return (
+            f"Travelpayouts / Aviasales: свежие цены для {origin} -> {destination}\n"
+            f"1. 12 300 ₽/чел. (49 200 ₽ на {group_size} чел.), 2026-06-12 -> 2026-06-14, прямой, оценка 9/10, вписывается в средний бюджет"
+        )
+
+
 def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
 
@@ -242,6 +252,20 @@ def test_hotels_command_returns_russian_housing_sources(tmp_path) -> None:
     assert "Ищу варианты" in hotels_message.replies[0]["text"]
     assert "Островок" in hotels_message.replies[-1]["text"]
     assert "Яндекс Путешествия" in hotels_message.replies[-1]["text"]
+
+
+def test_tickets_command_returns_travelpayouts_snapshot(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    handlers.flight_provider = FakeFlightProvider()
+    create_update, _ = make_update(chat_id=406)
+    create_context = DummyContext(args=["Хочу", "из", "Томска", "в", "Казань", "на", "3", "дня"])
+    asyncio.run(handlers.plan_command(create_update, create_context))
+
+    tickets_update, tickets_message = make_update(chat_id=406)
+    asyncio.run(handlers.tickets_command(tickets_update, DummyContext()))
+
+    assert "Travelpayouts / Aviasales" in tickets_message.replies[-1]["text"]
+    assert "12 300" in tickets_message.replies[-1]["text"]
 
 
 def test_group_chat_analysis_uses_recent_messages_context(tmp_path) -> None:

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from database import Database
 from travel_links import build_links_text
+from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from weather_service import WeatherError, fetch_weather_summary
 
@@ -13,9 +14,15 @@ if TYPE_CHECKING:
 
 
 class TripService:
-    def __init__(self, database: Database, planner: TravelPlanner) -> None:
+    def __init__(
+        self,
+        database: Database,
+        planner: TravelPlanner,
+        flight_provider: TravelpayoutsFlightProvider | None = None,
+    ) -> None:
         self._db = database
         self._planner = planner
+        self._flight_provider = flight_provider
 
     def _request_from_trip_row(self, trip) -> dict[str, str | int]:
         return {
@@ -33,6 +40,15 @@ class TripService:
 
     def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
         notes = request.notes if notes_override is None else notes_override
+        tickets_text = ""
+        if self._flight_provider:
+            tickets_text = self._flight_provider.build_ticket_snapshot(
+                origin=request.origin,
+                destination=request.destination,
+                dates_text=request.dates_text,
+                budget_text=request.budget_text,
+                group_size=request.group_size,
+            )
         return {
             "title": request.title,
             "destination": request.destination,
@@ -51,6 +67,7 @@ class TripService:
             "alternatives_text": plan.alternatives_text,
             "budget_breakdown_text": plan.budget_breakdown_text,
             "budget_total_text": plan.budget_total_text,
+            "tickets_text": tickets_text,
             "links_text": build_links_text(request.destination, request.dates_text, request.origin),
             "status": "active",
         }

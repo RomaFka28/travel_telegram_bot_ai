@@ -25,6 +25,7 @@ from bot.trip_service import TripService
 from database import Database
 from housing_search import HousingSearchProvider
 from llm_travel_planner import LLMTravelPlanner
+from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from weather_service import WeatherError, fetch_weather_summary
 
@@ -49,12 +50,14 @@ class BotHandlers:
         formatter: TripFormatter,
         service: TripService,
         housing_provider: HousingSearchProvider,
+        flight_provider: TravelpayoutsFlightProvider | None = None,
     ) -> None:
         self.db = database
         self.planner = planner
         self.formatter = formatter
         self.service = service
         self.housing_provider = housing_provider
+        self.flight_provider = flight_provider
 
     @staticmethod
     def _display_name(update: Update) -> str:
@@ -413,6 +416,27 @@ class BotHandlers:
             self.formatter.build_help_text(),
             parse_mode=ParseMode.HTML,
         )
+
+    async def tickets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        trip = await self._get_active_trip_or_reply(update)
+        if not trip:
+            return
+        if not self.flight_provider or not self.flight_provider.enabled:
+            await update.effective_message.reply_text(
+                "Travelpayouts пока не подключён. Добавьте TRAVELPAYOUTS_API_KEY в Render, и я смогу подтягивать цены на билеты."
+            )
+            return
+
+        await update.effective_message.reply_text("Смотрю свежие цены на билеты через Travelpayouts...")
+        tickets_text = self.flight_provider.build_ticket_snapshot(
+            origin=trip["origin"] or "не указано",
+            destination=trip["destination"] or "",
+            dates_text=trip["dates_text"] or "не указаны",
+            budget_text=trip["budget_text"] or "средний",
+            group_size=int(trip["group_size"] or 1),
+        )
+        self.db.update_trip_fields(int(trip["id"]), {"tickets_text": tickets_text})
+        await update.effective_message.reply_text(tickets_text)
 
     async def share_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         trip = await self._get_active_trip_or_reply(update)

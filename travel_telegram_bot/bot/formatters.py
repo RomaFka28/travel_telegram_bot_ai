@@ -54,6 +54,7 @@ class TripFormatter:
             "Я быстро соберу черновик: куда, когда, сколько человек, какая погода и где искать билеты и жильё.\n\n"
             "Главное:\n"
             "• /summary — текущий план\n"
+            "• /tickets — цены на билеты через Travelpayouts\n"
             "• /status — отметить участие\n"
             "• /settings — включить или выключить авто-анализ\n"
             "• /hotels — быстрый сценарий по жилью\n"
@@ -70,6 +71,7 @@ class TripFormatter:
             "4. Открывайте <code>/summary</code>, когда нужен текущий план.\n\n"
             "<b>Основные команды</b>\n"
             "• <code>/summary</code> — сводка по активной поездке\n"
+            "• <code>/tickets</code> — цены на билеты и оценка по бюджету\n"
             "• <code>/status</code> — отметить участие\n"
             "• <code>/settings</code> — режим чата\n"
             "• <code>/hotels</code> — жильё и подготовка к более точному поиску\n"
@@ -78,7 +80,8 @@ class TripFormatter:
             "<b>Что бот делает сейчас</b>\n"
             "• собирает поездку из переписки\n"
             "• показывает погоду\n"
-            "• даёт русские ссылки на билеты и жильё\n"
+            "• подтягивает цены на билеты через Travelpayouts, если известен город вылета\n"
+            "• даёт русские ссылки на билеты, жильё и экскурсии\n"
             "• хранит активную поездку и историю\n\n"
             "<b>Ограничения</b>\n"
             "• бот не бронирует билеты и жильё\n"
@@ -148,14 +151,17 @@ class TripFormatter:
 
     def build_group_autodraft_reply(self, trip: dict) -> str:
         weather_text = (trip.get("weather_text") or "").strip()
+        tickets_text = (trip.get("tickets_text") or "").strip().splitlines()
         links_text = (trip.get("links_text") or "").strip().splitlines()
         useful_links = "\n".join(links_text[:3]) if links_text else "Ссылки пока не собраны."
+        tickets_preview = "\n".join(tickets_text[:2]) if tickets_text else ""
         return (
             f"🧭 Собрал черновик поездки\n"
             f"Куда: <b>{html.escape(trip['destination'] or 'не указано')}</b>\n"
             f"Когда: <b>{html.escape(trip['dates_text'] or 'уточняется')}</b>\n"
             f"Людей: <b>{int(trip['group_size'] or 0)}</b>\n"
             f"Бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
+            + (f"\n\n<b>Билеты</b>\n{html.escape(tickets_preview)}" if tickets_preview else "")
             + (f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else "")
             + f"\n\n<b>Где искать</b>\n{html.escape(useful_links)}"
             + "\n\nОткройте /summary, если нужен полный план."
@@ -211,6 +217,8 @@ class TripFormatter:
         notes_text = self._escape_block(trip["notes"] or "—")
         weather_text = (trip["weather_text"] or "").strip()
         weather_block = f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else ""
+        tickets_text = (trip.get("tickets_text") or "").strip()
+        tickets_block = f"\n\n<b>Билеты</b>\n{html.escape(tickets_text)}" if tickets_text else ""
         links_text = (trip.get("links_text") or "").strip()
         links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text else ""
 
@@ -233,6 +241,7 @@ class TripFormatter:
             + "\n".join(self._date_lines(trip_id))
             + "\n\n"
             + f"<b>Заметки / открытые вопросы</b>\n{notes_text}"
+            + tickets_block
             + links_block
             + weather_block
         )
