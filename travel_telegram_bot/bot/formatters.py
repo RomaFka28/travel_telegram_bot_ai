@@ -80,7 +80,7 @@ class TripFormatter:
             "• согласование состава, дат и базового travel-brief внутри Telegram\n\n"
             "<b>Что важно знать</b>\n"
             "• бот не бронирует билеты и жильё\n"
-            "• бюджет и логистика здесь ориентировочные, без live-цен\n"
+            "• точных live-цен в самом боте пока нет, но в summary есть ссылки на реальные поиски билетов и жилья\n"
             "• авто-анализ групповых сообщений работает только если включён в /settings\n"
             "• для чтения обычных сообщений в группе у бота должен быть отключён privacy mode в BotFather\n\n"
             "<b>Полезные команды</b>\n"
@@ -180,6 +180,8 @@ class TripFormatter:
         notes_text = self._escape_block(trip["notes"] or "—")
         weather_text = (trip["weather_text"] or "").strip()
         weather_block = f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else ""
+        links_text = (trip.get("links_text") or "").strip()
+        links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text else ""
 
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
@@ -200,5 +202,6 @@ class TripFormatter:
             + "\n".join(self._date_lines(trip_id))
             + "\n\n"
             + f"<b>Заметки / открытые вопросы</b>\n{notes_text}"
+            + links_block
             + weather_block
         )

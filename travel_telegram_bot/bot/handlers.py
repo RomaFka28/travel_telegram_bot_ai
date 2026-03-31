@@ -848,7 +848,15 @@ class BotHandlers:
 
         from bot.group_chat_analyzer import GroupChatAnalyzer
 
-        signal = GroupChatAnalyzer().analyze(text)
+        recent_messages = context.chat_data.get("recent_group_messages", [])
+        if not isinstance(recent_messages, list):
+            recent_messages = []
+        recent_messages.append(text)
+        recent_messages = recent_messages[-8:]
+        context.chat_data["recent_group_messages"] = recent_messages
+
+        analyzer = GroupChatAnalyzer()
+        signal = analyzer.analyze_messages(recent_messages)
         if not signal.has_travel_intent:
             return
 
@@ -890,7 +898,7 @@ class BotHandlers:
         if trip_id:
             context.chat_data["last_auto_reply"] = now
             await message.reply_text(
-                "🗺 Заметил обсуждение поездки и собрал черновик. Откройте /summary, чтобы проверить план, или отключите авто-черновики через /settings."
+                "🗺 Я собрал черновик по последним сообщениям чата: учёл обсуждение направления, дат и формата поездки. Откройте /summary, чтобы проверить план, или отключите авто-черновики через /settings."
             )
 
     async def trip_action_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

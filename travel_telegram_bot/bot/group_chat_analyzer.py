@@ -72,6 +72,11 @@ class GroupChatAnalyzer:
             raw_text=text,
         )
 
+    def analyze_messages(self, messages: list[str]) -> ChatSignal:
+        cleaned = [message.strip() for message in messages if (message or "").strip()]
+        combined = "\n".join(cleaned[-8:])
+        return self.analyze(combined)
+
     def _extract_names(self, text: str) -> list[str]:
         tokens = re.findall(r"\b[А-ЯЁ][а-яё]{2,}\b", text)
         result: list[str] = []

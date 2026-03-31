@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from database import Database
+from travel_links import build_links_text
 from travel_planner import TravelPlanner
 from weather_service import WeatherError, fetch_weather_summary
 
@@ -50,6 +51,7 @@ class TripService:
             "alternatives_text": plan.alternatives_text,
             "budget_breakdown_text": plan.budget_breakdown_text,
             "budget_total_text": plan.budget_total_text,
+            "links_text": build_links_text(request.destination, request.dates_text, request.origin),
             "status": "active",
         }
 

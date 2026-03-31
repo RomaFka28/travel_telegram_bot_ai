@@ -228,6 +228,26 @@ def test_share_and_archive_keep_trip_history(tmp_path) -> None:
     assert "История сохранена" in archive_message.replies[-1]["text"]
 
 
+def test_group_chat_analysis_uses_recent_messages_context(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+
+    update1, _ = make_update(text="Ребята, давайте летом куда-нибудь съездим", chat_id=515)
+    asyncio.run(handlers.handle_group_message(update1, context))
+    assert database.get_active_trip(515) is None
+
+    update2, message2 = make_update(text="Я бы в Казань на 3 дня, нас будет четверо", chat_id=515)
+    asyncio.run(handlers.handle_group_message(update2, context))
+
+    trip = database.get_active_trip(515)
+    assert trip is not None
+    assert trip["destination"] == "Казань"
+    assert trip["links_text"]
+    assert "aviasales" in trip["links_text"].lower()
+    assert "booking" in trip["links_text"].lower()
+    assert "последним сообщениям чата" in message2.replies[-1]["text"]
+
+
 def test_trips_and_select_trip_commands_restore_archived_trip(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
 
