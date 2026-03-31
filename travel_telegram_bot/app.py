@@ -42,7 +42,7 @@ async def post_init(application) -> None:
         BotCommand("help", "Короткая справка"),
         BotCommand("summary", "Текущий план поездки"),
         BotCommand("tickets", "Цены на билеты и оценка"),
-        BotCommand("status", "Отметить участие"),
+        BotCommand("status", "Мой ответ по поездке"),
         BotCommand("settings", "Авто-анализ и режим чата"),
         BotCommand("trips", "История поездок"),
         BotCommand("select_trip", "Вернуть поездку из истории"),

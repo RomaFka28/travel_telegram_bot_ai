@@ -149,7 +149,7 @@ class TripFormatter:
             "Главное:\n"
             "• /summary — текущий план\n"
             "• /tickets — цены на билеты через Travelpayouts\n"
-            "• /status — отметить участие\n"
+            "• /status — ваш ответ по поездке\n"
             "• /settings — включить или выключить авто-анализ\n"
             "• /hotels — быстрый сценарий по жилью\n"
             "• /trips — история поездок\n"
@@ -166,7 +166,7 @@ class TripFormatter:
             "<b>Основные команды</b>\n"
             "• <code>/summary</code> — сводка по активной поездке\n"
             "• <code>/tickets</code> — цены на билеты и оценка по бюджету\n"
-            "• <code>/status</code> — отметить участие\n"
+            "• <code>/status</code> — ваш ответ по поездке\n"
             "• <code>/settings</code> — режим чата\n"
             "• <code>/hotels</code> — жильё и подготовка к более точному поиску\n"
             "• <code>/trips</code> — история поездок\n"
@@ -229,7 +229,7 @@ class TripFormatter:
 
     def build_status_options_text(self) -> str:
         options = " / ".join(STATUS_LABELS[status] for status in ("going", "interested", "not_going"))
-        return f"Выберите статус участия или передайте его командой. Доступно: {options}."
+        return f"Выберите свой ответ по поездке или передайте его командой. Доступно: {options}."
 
     def build_trip_list_text(self, chat_id: int) -> str:
         trips = self._db.list_trips(chat_id)
