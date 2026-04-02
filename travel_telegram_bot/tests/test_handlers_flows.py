@@ -19,8 +19,24 @@ class DummyMessage:
         self.text = text
         self.replies: list[dict[str, object]] = []
 
-    async def reply_text(self, text: str, parse_mode=None, reply_markup=None, **kwargs) -> None:
-        self.replies.append(
+    async def reply_text(self, text: str, parse_mode=None, reply_markup=None, **kwargs):
+        reply = {
+            "text": text,
+            "parse_mode": parse_mode,
+            "reply_markup": reply_markup,
+            **kwargs,
+        }
+        self.replies.append(reply)
+        return DummySentMessage(reply)
+
+
+class DummySentMessage:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+        self.deleted = False
+
+    async def edit_text(self, text: str, parse_mode=None, reply_markup=None, **kwargs) -> None:
+        self.payload.update(
             {
                 "text": text,
                 "parse_mode": parse_mode,
@@ -28,6 +44,9 @@ class DummyMessage:
                 **kwargs,
             }
         )
+
+    async def delete(self) -> None:
+        self.deleted = True
 
 
 class DummyCallbackQuery:
@@ -941,7 +960,7 @@ def test_create_trip_from_text_uses_async_llm_planner_path(tmp_path) -> None:
         )
     )
     handlers.service._planner = handlers.planner
-    update, _ = make_update(
+    update, message = make_update(
         text="Хочу в Казань на 3 дня, нас 2",
         chat_id=1810,
         chat_type="private",
@@ -990,6 +1009,9 @@ def test_create_trip_from_text_uses_async_llm_planner_path(tmp_path) -> None:
     llm_async_mock.assert_awaited_once()
     assert to_thread_mock.await_count == 1
     refresh_mock.assert_awaited_once()
+    assert len(message.replies) == 1
+    assert "🧭" in str(message.replies[0]["text"])
+    assert "Thinking over the trip with AI" not in str(message.replies[0]["text"])
 
 
 def test_new_trip_notes_uses_async_llm_planner_path(tmp_path) -> None:

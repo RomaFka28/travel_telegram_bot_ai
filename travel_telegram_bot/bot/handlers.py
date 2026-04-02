@@ -151,6 +151,33 @@ class BotHandlers:
     def _build_plan_prompt_text(language_code: str = "ru") -> str:
         return tr(language_code, "plan_prompt")
 
+    async def _replace_or_remove_progress_message(
+        self,
+        progress_message,
+        text: str,
+        *,
+        parse_mode=None,
+        reply_markup=None,
+        disable_web_page_preview: bool = True,
+    ) -> bool:
+        if progress_message is None:
+            return False
+        try:
+            await progress_message.edit_text(
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+                disable_web_page_preview=disable_web_page_preview,
+            )
+            return True
+        except Exception as exc:
+            logger.info("Could not edit progress message into final plan: %s", exc)
+        try:
+            await progress_message.delete()
+        except Exception as exc:
+            logger.info("Could not delete progress message before sending final plan: %s", exc)
+        return False
+
     async def _create_trip_from_text(self, update: Update, raw_text: str) -> bool:
         message = update.effective_message
         if not message:
@@ -176,8 +203,9 @@ class BotHandlers:
         if not chat:
             return False
         replaced_trip = self.db.get_active_trip(chat.id) is not None
+        progress_message = None
         if isinstance(self.planner, LLMTravelPlanner):
-            await message.reply_text(
+            progress_message = await message.reply_text(
                 "Thinking over the trip with AI, this may take up to a minute..."
                 if self._chat_language(chat.id) == "en"
                 else "Думаю над поездкой с помощью ИИ, это может занять до минуты..."
@@ -198,19 +226,29 @@ class BotHandlers:
         self.db.set_selected_trip(chat.id, trip_id)
         await self.service._refresh_weather_for_trip(trip_id)
 
-        await message.reply_text(
-            self.formatter.build_trip_created_text(
-                replaced_trip=replaced_trip,
-                chat_type=getattr(chat, "type", None),
-                language_code=self._chat_language(chat.id),
-            )
-        )
-        await message.reply_text(
-            self.formatter._build_summary_html(trip_id),
+        summary_text = self.formatter._build_summary_html(trip_id)
+        summary_keyboard = trip_summary_keyboard(trip_id, self._chat_language(chat.id))
+        replaced_status_message = await self._replace_or_remove_progress_message(
+            progress_message,
+            summary_text,
             parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
+            reply_markup=summary_keyboard,
             disable_web_page_preview=True,
         )
+        if not replaced_status_message:
+            await message.reply_text(
+                self.formatter.build_trip_created_text(
+                    replaced_trip=replaced_trip,
+                    chat_type=getattr(chat, "type", None),
+                    language_code=self._chat_language(chat.id),
+                )
+            )
+            await message.reply_text(
+                summary_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=summary_keyboard,
+                disable_web_page_preview=True,
+            )
         entry_notice = self.formatter.build_entry_notice_text(trip_id)
         if entry_notice:
             await message.reply_text(entry_notice)
