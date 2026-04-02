@@ -6,6 +6,7 @@ pytest-cache-files-*/
 travel_telegram_bot/.pytest_tmp/
 travel_telegram_bot/pytest-tmp-run/
 travel_telegram_bot/pytest-tmp-run2/
+travel_telegram_bot/pytest-tmp-run*/
 .venv/
 __pycache__/
 *.pyc
