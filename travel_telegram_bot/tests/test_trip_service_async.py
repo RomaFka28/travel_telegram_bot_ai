@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import bot.trip_service as service_module
 from bot.trip_service import TripService
 from database import Database
 from travel_planner import TravelPlanner
@@ -50,7 +51,55 @@ def test_refresh_weather_for_trip_uses_to_thread(tmp_path) -> None:
     trip = database.get_trip_by_id(trip_id)
     assert trip is not None
     assert trip["weather_text"] == "Солнечно"
+    assert trip["weather_updated_at"] is not None
     assert to_thread_mock.await_count == 1
+
+
+def test_refresh_weather_for_trip_clears_stale_weather_when_summary_is_missing(tmp_path) -> None:
+    database, _, service = build_service(tmp_path)
+    trip_id = create_trip(database)
+    database.update_trip_fields(
+        trip_id,
+        {
+            "weather_text": "stale forecast",
+            "weather_updated_at": "2026-01-01T00:00:00",
+        },
+    )
+
+    async def fake_to_thread(func, *args, **kwargs):
+        assert func.__name__ == "fetch_weather_summary"
+        return None
+
+    with patch("bot.trip_service.asyncio.to_thread", new=AsyncMock(side_effect=fake_to_thread)):
+        asyncio.run(service._refresh_weather_for_trip(trip_id))
+
+    trip = database.get_trip_by_id(trip_id)
+    assert trip is not None
+    assert trip["weather_text"] is None
+    assert trip["weather_updated_at"] is None
+
+
+def test_refresh_weather_for_trip_clears_stale_weather_on_weather_error(tmp_path) -> None:
+    database, _, service = build_service(tmp_path)
+    trip_id = create_trip(database)
+    database.update_trip_fields(
+        trip_id,
+        {
+            "weather_text": "stale forecast",
+            "weather_updated_at": "2026-01-01T00:00:00",
+        },
+    )
+
+    async def fake_to_thread(func, *args, **kwargs):
+        raise service_module.WeatherError("boom")
+
+    with patch("bot.trip_service.asyncio.to_thread", new=AsyncMock(side_effect=fake_to_thread)):
+        asyncio.run(service._refresh_weather_for_trip(trip_id))
+
+    trip = database.get_trip_by_id(trip_id)
+    assert trip is not None
+    assert trip["weather_text"] is None
+    assert trip["weather_updated_at"] is None
 
 
 def test_rebuild_trip_uses_to_thread_for_plan_and_payload(tmp_path) -> None:

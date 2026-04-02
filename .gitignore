@@ -1,4 +1,11 @@
 .env
+*.env
+travel_telegram_bot/.env
+.pytest_cache/
+pytest-cache-files-*/
+travel_telegram_bot/.pytest_tmp/
+travel_telegram_bot/pytest-tmp-run/
+travel_telegram_bot/pytest-tmp-run2/
 .venv/
 __pycache__/
 *.pyc
@@ -18,4 +25,3 @@ travel_telegram_bot/data/
 # IDE
 .vscode/
 .idea/
-

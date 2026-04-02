@@ -106,7 +106,6 @@ def build_application():
         ApplicationBuilder()
         .token(settings.telegram_token)
         .post_init(post_init)
-        .concurrent_updates(True)
         .build()
     )
 

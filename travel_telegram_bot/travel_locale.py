@@ -149,6 +149,8 @@ def resolve_place_country(place: str) -> str | None:
         geo = geocode_city(normalized)
     except WeatherError:
         return None
+    if not geo:
+        return None
     return (geo.country or "").strip() or None
 
 

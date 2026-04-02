@@ -492,6 +492,11 @@ class TripFormatter:
         open_questions = (trip.get("open_questions_text") or "").strip()
         open_questions_block = f"\n\n<b>{tr(lang, 'summary_open_questions')}</b>\n{html.escape(open_questions)}" if open_questions else ""
         readiness_text, checklist_text = self._planning_readiness(trip, trip_id)
+        route_preview = self._escape_block(
+            self._preview_multiline(trip["itinerary_text"] or "", max_blocks=3)
+            if has_destination
+            else tr(lang, "summary_short_no_destination")
+        )
 
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
@@ -508,7 +513,7 @@ class TripFormatter:
             + short_block
             + "\n\n"
             f"<b>{tr(lang, 'summary_context')}</b>\n{context_preview}\n\n"
-            f"<b>{tr(lang, 'summary_route')}</b>\n{tr(lang, 'summary_route_button_note')}\n\n"
+            f"<b>{tr(lang, 'summary_route')}</b>\n{route_preview}\n{tr(lang, 'summary_route_button_note')}\n\n"
             f"<b>{tr(lang, 'summary_stay')}</b>\n{stay_preview}\n\n"
             f"<b>{tr(lang, 'summary_budget_total')}</b>\n{html.escape(trip['budget_total_text'] or tr(lang, 'summary_budget_total_empty'))}\n\n"
             f"<b>{tr(lang, 'summary_participants')}</b>\n"

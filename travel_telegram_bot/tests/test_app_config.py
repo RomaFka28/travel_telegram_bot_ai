@@ -23,7 +23,7 @@ class FakeBuilder:
         return SimpleNamespace(add_handler=lambda *args, **kwargs: None, add_error_handler=lambda *args, **kwargs: None)
 
 
-def test_build_application_enables_concurrent_updates(tmp_path) -> None:
+def test_build_application_uses_default_sequential_updates(tmp_path) -> None:
     fake_builder = FakeBuilder()
     settings = SimpleNamespace(
         telegram_token="token",
@@ -48,7 +48,7 @@ def test_build_application_enables_concurrent_updates(tmp_path) -> None:
     ), patch.object(app_module, "build_housing_provider", return_value=SimpleNamespace()):
         app_module.build_application()
 
-    assert fake_builder.concurrent_updates_value is True
+    assert fake_builder.concurrent_updates_value is None
 
 
 def test_build_application_uses_llm_planner_when_provider_pool_is_available(tmp_path) -> None:

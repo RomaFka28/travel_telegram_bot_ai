@@ -579,6 +579,8 @@ class Database:
         trip = self.get_trip_by_id(trip_id)
         if not trip or int(trip["chat_id"]) != chat_id:
             return False
+        selected_trip = self.get_selected_trip(chat_id)
+        should_clear_selected = bool(selected_trip and int(selected_trip["id"]) == trip_id)
 
         if self.is_postgres:
             with self._connect() as conn:
@@ -589,8 +591,7 @@ class Database:
                     )
                     deleted = cur.rowcount > 0
             if deleted:
-                selected_trip = self.get_selected_trip(chat_id)
-                if selected_trip and int(selected_trip["id"]) == trip_id:
+                if should_clear_selected:
                     self.set_selected_trip(chat_id, None)
             return deleted
 
@@ -601,8 +602,7 @@ class Database:
             )
             deleted = cursor.rowcount > 0
         if deleted:
-            selected_trip = self.get_selected_trip(chat_id)
-            if selected_trip and int(selected_trip["id"]) == trip_id:
+            if should_clear_selected:
                 self.set_selected_trip(chat_id, None)
         return deleted
 

@@ -157,6 +157,32 @@ def test_delete_trip_removes_trip_completely(tmp_path) -> None:
     assert database.get_trip_by_id(trip_id) is None
 
 
+def test_delete_trip_clears_selected_trip_when_selected_trip_is_removed(tmp_path) -> None:
+    database = Database(str(tmp_path / "delete_selected.db"))
+    database.init_db()
+
+    trip_id = database.create_trip(chat_id=17, created_by=1, payload=_sample_payload("ÐšÐ°Ð·Ð°Ð½ÑŒ"))
+    database.set_selected_trip(17, trip_id)
+
+    assert database.delete_trip(17, trip_id) is True
+    assert database.get_selected_trip(17) is None
+
+
+def test_delete_trip_keeps_selected_trip_when_another_trip_is_removed(tmp_path) -> None:
+    database = Database(str(tmp_path / "delete_other.db"))
+    database.init_db()
+
+    first_trip_id = database.create_trip(chat_id=18, created_by=1, payload=_sample_payload("ÐšÐ°Ð·Ð°Ð½ÑŒ"))
+    second_trip_id = database.create_trip(chat_id=18, created_by=1, payload=_sample_payload("Ð¡Ð¾Ñ‡Ð¸"))
+    database.set_selected_trip(18, first_trip_id)
+
+    assert database.delete_trip(18, second_trip_id) is True
+    selected_trip = database.get_selected_trip(18)
+
+    assert selected_trip is not None
+    assert selected_trip["id"] == first_trip_id
+
+
 def test_sqlite_connection_can_be_used_from_another_thread(tmp_path) -> None:
     database = Database(str(tmp_path / "threadsafe.db"))
     connection = database._connect()

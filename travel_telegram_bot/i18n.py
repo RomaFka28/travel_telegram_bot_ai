@@ -88,7 +88,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "group_people": "Людей",
         "group_budget": "Бюджет",
         "group_trip_class": "Класс поездки",
-        "group_short": "Коротко",
+        "group_short": "Быстрый вывод",
         "group_wait_destination": "Жду направление поездки, чтобы собрать осмысленный маршрут, жильё и полезные ссылки.",
         "group_open_questions": "Что ещё уточнить",
         "group_clarify_destination": "Похоже, вы обсуждаете поездку. Куда хотите поехать?",

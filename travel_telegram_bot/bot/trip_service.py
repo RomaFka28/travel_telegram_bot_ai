@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from database import Database
@@ -95,6 +95,8 @@ class TripService:
                 group_size=request.group_size,
                 source_text=context_text,
             )
+        if not flight_results:
+            flight_results = trim_results(structured.get("tickets", []))
         if flight_results:
             structured["tickets"] = trim_results(flight_results)
 
@@ -217,7 +219,7 @@ class TripService:
             "transport_results": serialize_results(structured_results["transport_results"]),
             "rental_results": serialize_results(structured_results["rental_results"]),
             "detected_needs": serialize_needs(detected_needs),
-            "results_updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "results_updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "open_questions_text": self._build_open_questions(effective_request, detected_needs, structured_results),
             "status": "active",
         }
@@ -273,14 +275,13 @@ class TripService:
             summary = await asyncio.to_thread(fetch_weather_summary, destination, dates_text)
         except WeatherError:
             summary = None
-        if summary:
-            self._db.update_trip_fields(
-                trip_id,
-                {
-                    "weather_text": summary,
-                    "weather_updated_at": datetime.utcnow().isoformat(timespec="seconds"),
-                },
-            )
+        self._db.update_trip_fields(
+            trip_id,
+            {
+                "weather_text": summary,
+                "weather_updated_at": datetime.now(UTC).isoformat(timespec="seconds") if summary else None,
+            },
+        )
 
     async def auto_draft_from_signal(
         self,

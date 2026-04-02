@@ -5,7 +5,7 @@ import html
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Final
 
 from telegram import ReplyKeyboardRemove, Update
@@ -221,9 +221,8 @@ class BotHandlers:
         cooldown_seconds: int,
     ) -> bool:
         lock_key = f"_lock_{key}"
-        if lock_key not in context.chat_data:
-            context.chat_data[lock_key] = asyncio.Lock()
-        async with context.chat_data[lock_key]:
+        lock = context.chat_data.setdefault(lock_key, asyncio.Lock())
+        async with lock:
             now = time.time()
             last = context.chat_data.get(key, 0)
             if now - last < cooldown_seconds:
@@ -494,7 +493,7 @@ class BotHandlers:
                 trip_id,
                 {
                     "weather_text": summary,
-                    "weather_updated_at": datetime.utcnow().isoformat(timespec="seconds"),
+                    "weather_updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
                 },
             )
 
@@ -1016,21 +1015,34 @@ class BotHandlers:
 
         analyzer = GroupChatAnalyzer()
         signal = analyzer.analyze_messages(recent_messages)
+        active_trip = self.db.get_active_trip(chat.id)
+        if active_trip and any(
+            [
+                signal.dates_text,
+                signal.budget_hint,
+                signal.origin,
+                signal.interests,
+                signal.detected_needs,
+            ]
+        ):
+            signal.has_travel_intent = True
+            if not signal.destination:
+                signal.destination = active_trip.get("destination")
         if not signal.has_travel_intent:
             return
 
-        active_trip = self.db.get_active_trip(chat.id)
         user = update.effective_user
 
         if not signal.destination:
-            if signal.destination_votes and await self._should_send_group_reply(context, "last_destination_vote_reply", cooldown_seconds=600):
-                await message.reply_text(
-                    self.formatter.build_group_destination_vote_text(
-                        signal.destination_votes,
-                        self._chat_language(chat.id),
-                    ),
-                    parse_mode=ParseMode.HTML,
-                )
+            if signal.destination_votes:
+                if await self._should_send_group_reply(context, "last_destination_vote_reply", cooldown_seconds=600):
+                    await message.reply_text(
+                        self.formatter.build_group_destination_vote_text(
+                            signal.destination_votes,
+                            self._chat_language(chat.id),
+                        ),
+                        parse_mode=ParseMode.HTML,
+                    )
             elif await self._should_send_group_reply(context, "last_clarify_reply", cooldown_seconds=600):
                 await message.reply_text(
                     self.formatter.build_group_clarifying_question(self._chat_language(chat.id))
@@ -1500,6 +1512,7 @@ class BotHandlers:
                     reply_markup=trip_summary_keyboard(next_trip_id, self._chat_language(chat.id)),
                     disable_web_page_preview=True,
                 )
+                await message.reply_text("Поездка удалена. Ниже открыл следующую доступную поездку.")
             else:
                 await message.reply_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
         else:

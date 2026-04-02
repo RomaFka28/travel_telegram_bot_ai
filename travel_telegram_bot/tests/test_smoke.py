@@ -117,7 +117,7 @@ def test_participant_names_exclude_cities():
 
 def test_planner_understands_single_traveler_and_unlimited_budget():
     planner = TravelPlanner()
-    request = planner.parse_trip_request("???? ? ??? ?? ?????? ?? 7 ????, ?????? ?? ?????????")
+    request = planner.parse_trip_request("Хочу в Сочи на 7 дней, поеду один, бюджет не ограничен")
 
     assert request.group_size == 1
-    assert request.budget_text == "?? ?????????"
+    assert request.budget_text == "без ограничений"

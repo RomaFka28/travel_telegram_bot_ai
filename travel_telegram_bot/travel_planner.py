@@ -499,6 +499,37 @@ DEFAULT_PROFILE = DestinationProfile(
 
 
 class TravelPlanner:
+    _DESTINATION_STOPWORDS = {
+        "аренду",
+        "билет",
+        "билеты",
+        "бюджет",
+        "выходные",
+        "день",
+        "дней",
+        "дня",
+        "дорога",
+        "дорогу",
+        "июле",
+        "июня",
+        "июнь",
+        "комфорт",
+        "летом",
+        "маршрут",
+        "машину",
+        "несколько",
+        "обратно",
+        "отель",
+        "отели",
+        "пару",
+        "поезд",
+        "поездку",
+        "поездки",
+        "тогда",
+        "туда",
+        "экскурсии",
+    }
+
     def parse_trip_request(self, text: str, *, fallback_title: str | None = None, language_code: str = "ru") -> TripRequest:
         cleaned = self._normalize_spaces(text)
         destination = self._extract_destination(cleaned)
@@ -653,6 +684,13 @@ class TravelPlanner:
         candidate = re.sub(r"\b(на|дней|дня|день|человека|человек|чел)\b.*$", "", candidate, flags=re.IGNORECASE).strip()
         if not candidate:
             return None
+        normalized_candidate = (normalized_search_value(candidate) or "").lower()
+        if (
+            not normalized_candidate
+            or normalized_candidate in self._DESTINATION_STOPWORDS
+            or normalized_candidate.startswith("куда")
+        ):
+            return None
         return self._display_destination(candidate)
 
     @staticmethod
@@ -755,14 +793,14 @@ class TravelPlanner:
         if direct:
             return direct.group(0)
 
-        lowered = text.lower()
-        for word in RUS_MONTH_WORDS:
-            if word in lowered:
-                if word == "ма":
-                    continue
-                snippet_match = re.search(r"\b([А-Яа-яA-Za-z0-9\- ]{0,20}" + re.escape(word) + r"[А-Яа-яA-Za-z0-9\- ]{0,20})", text, flags=re.IGNORECASE)
-                if snippet_match:
-                    return snippet_match.group(1).strip(" ,.")
+        season_or_month = re.search(
+            r"\b(январ[ьяе]?|феврал[ьяе]?|март[ае]?|апрел[ьяе]?|ма[йяе]?|июн[ьяе]?|июл[ьяе]?|август[ае]?|сентябр[ьяе]?|октябр[ьяе]?|ноябр[ьяе]?|декабр[ьяе]?|весн[аойе]?|лет[оам]?|осен[ьюия]?|зим[аойе]?|майск(?:ие|их)?|новогодн(?:ие|их)?|выходн(?:ые|ых)?)\b",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if season_or_month:
+            return season_or_month.group(1)
+
         return "не указаны"
 
     def _extract_budget(self, text: str) -> str:
