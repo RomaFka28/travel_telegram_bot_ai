@@ -975,7 +975,7 @@ def test_create_trip_from_text_uses_async_llm_planner_path(tmp_path) -> None:
 
     with patch.object(
         handlers.planner,
-        "generate_plan_llm_async",
+        "generate_plan_async",
         new=AsyncMock(return_value=stub_plan),
     ) as llm_async_mock, patch(
         "bot.handlers.asyncio.to_thread",
@@ -1062,7 +1062,7 @@ def test_new_trip_notes_uses_async_llm_planner_path(tmp_path) -> None:
 
     with patch.object(
         handlers.planner,
-        "generate_plan_llm_async",
+        "generate_plan_async",
         new=AsyncMock(return_value=stub_plan),
     ) as llm_async_mock, patch(
         "bot.handlers.asyncio.to_thread",
@@ -1132,7 +1132,7 @@ def test_handle_trip_edit_input_uses_async_llm_planner_path(tmp_path) -> None:
 
     with patch.object(
         handlers.planner,
-        "generate_plan_llm_async",
+        "generate_plan_async",
         new=AsyncMock(return_value=stub_plan),
     ) as llm_async_mock, patch(
         "bot.handlers.asyncio.to_thread",

@@ -56,6 +56,13 @@ class LLMTravelPlanner(TravelPlanner):
             f"All {len(providers)} LLM providers failed. Last error: {last_error}"
         )
 
+    async def generate_plan_async(self, request: TripRequest) -> TripPlan:
+        try:
+            return await self.generate_plan_llm_async(request)
+        except OpenRouterError:
+            logger.exception("All LLM providers failed in async path, falling back to heuristic planner")
+            return await asyncio.to_thread(self.generate_plan_heuristic, request)
+
     def interpret_budget_text(self, text: str) -> BudgetInterpretation:
         heuristic = self._interpret_budget_heuristic(text)
         if heuristic.confidence >= 0.9:

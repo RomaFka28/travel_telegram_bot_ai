@@ -185,7 +185,7 @@ class BotHandlers:
         await chat.send_action("typing")
 
         if isinstance(self.planner, LLMTravelPlanner):
-            plan = await self.planner.generate_plan_llm_async(request)
+            plan = await self.planner.generate_plan_async(request)
         else:
             plan = await asyncio.to_thread(self.planner.generate_plan, request)
         payload = await asyncio.to_thread(
@@ -767,7 +767,7 @@ class BotHandlers:
         replaced_trip = self.db.get_active_trip(chat.id) is not None
 
         if isinstance(self.planner, LLMTravelPlanner):
-            plan = await self.planner.generate_plan_llm_async(request)
+            plan = await self.planner.generate_plan_async(request)
         else:
             plan = await asyncio.to_thread(self.planner.generate_plan, request)
         payload = await asyncio.to_thread(
@@ -953,7 +953,7 @@ class BotHandlers:
             await message.reply_text("Подсказка: сначала укажите направление, например: «добавь Казань».")
             return
         if isinstance(self.planner, LLMTravelPlanner):
-            plan = await self.planner.generate_plan_llm_async(request)
+            plan = await self.planner.generate_plan_async(request)
         else:
             plan = await asyncio.to_thread(self.planner.generate_plan, request)
         payload = await asyncio.to_thread(

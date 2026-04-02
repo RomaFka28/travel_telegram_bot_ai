@@ -75,3 +75,38 @@ def test_llm_travel_planner_async_uses_round_robin_primary_and_fallback() -> Non
 
     assert plan == expected_plan
     assert attempted == ["Groq", "Gemini"]
+
+
+def test_llm_travel_planner_async_falls_back_to_heuristic_when_all_providers_fail() -> None:
+    pool = LLMProviderPool(
+        [
+            LLMProvider("Groq", 14400, "groq-key", "https://groq.example", "groq-model"),
+            LLMProvider("Gemini", 1500, "gemini-key", "https://gemini.example", "gemini-model"),
+        ]
+    )
+    planner = LLMTravelPlanner(pool)
+    request = TravelPlanner().build_request_from_fields(
+        title="Istanbul trip",
+        destination="Istanbul",
+        origin="Tbilisi",
+        dates_text="12 June",
+        days_count=4,
+        group_size=1,
+        budget_text="business",
+        interests_text="walks, food",
+        notes="",
+        source_prompt="Plan an Istanbul trip",
+        language_code="en",
+    )
+    expected_plan = TravelPlanner().generate_plan_heuristic(request)
+
+    async def run_test():
+        with patch(
+            "llm_travel_planner.generate_trip_plan_with_provider",
+            side_effect=OpenRouterError("provider down"),
+        ):
+            return await planner.generate_plan_async(request)
+
+    plan = asyncio.run(run_test())
+
+    assert plan == expected_plan
