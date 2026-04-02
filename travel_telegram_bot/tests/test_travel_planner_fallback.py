@@ -21,3 +21,26 @@ def test_fallback_context_for_foreign_destination_mentions_api_key() -> None:
 
     assert "OPENROUTER_API_KEY" in plan.context_text
     assert "реальных мест" in plan.context_text
+
+
+def test_known_foreign_destination_budget_total_is_in_rubles() -> None:
+    planner = TravelPlanner()
+    request = planner.build_request_from_fields(
+        title="Istanbul trip",
+        destination="Стамбул",
+        origin="Тбилиси",
+        dates_text="12 июня",
+        days_count=3,
+        group_size=1,
+        budget_text="Бизнес",
+        interests_text="еда, прогулки",
+        notes="",
+        source_prompt="Хочу в Стамбул",
+        language_code="ru",
+    )
+
+    plan = planner.generate_plan(request)
+
+    assert "₽" in plan.budget_total_text
+    assert "₺" not in plan.budget_total_text
+    assert "В местной валюте" in plan.budget_breakdown_text

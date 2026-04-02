@@ -1,4 +1,4 @@
-from openrouter_client import OpenRouterConfig, _build_request_headers, build_trip_plan_payload
+from openrouter_client import OpenRouterConfig, _build_request_headers, _coerce_trip_plan, build_trip_plan_payload
 from travel_planner import TravelPlanner
 
 
@@ -92,3 +92,23 @@ def test_build_trip_plan_payload_russian_prompt_mentions_real_named_places() -> 
     assert "Reply in Russian" in payload["messages"][0]["content"]
     assert "actual museum name" in payload["messages"][0]["content"]
     assert "REAL named places" in payload["messages"][1]["content"]
+
+
+def test_coerce_trip_plan_fills_missing_sections_from_heuristic() -> None:
+    request = make_request("ru")
+    plan = _coerce_trip_plan(
+        {
+            "context_text": "Контекст от LLM",
+            "itinerary_text": "День 1. Свой маршрут",
+            "stay_text": "• Базовый выбор: центр",
+            "budget_breakdown_text": "• Итого ориентир: 10 000 ₽",
+            "budget_total_text": "10 000 ₽",
+        },
+        request,
+    )
+
+    assert plan.context_text == "Контекст от LLM"
+    assert plan.itinerary_text == "День 1. Свой маршрут"
+    assert plan.stay_text == "• Базовый выбор: центр"
+    assert plan.logistics_text
+    assert plan.alternatives_text

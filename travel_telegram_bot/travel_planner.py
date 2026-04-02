@@ -30,6 +30,33 @@ BUDGET_HINTS = {
     "первый класс": ["первый класс", "first class", "премиум", "люкс", "vip", "вип", "не ограничен", "без ограничений"],
 }
 
+APPROX_RUB_RATES: dict[str, float] = {
+    "RUB": 1.0,
+    "EUR": 96.0,
+    "USD": 89.0,
+    "TRY": 2.35,
+    "KZT": 0.18,
+    "BYN": 27.0,
+    "AMD": 0.23,
+    "KGS": 1.02,
+    "UZS": 0.007,
+    "AZN": 52.0,
+    "GEL": 33.0,
+    "AED": 24.0,
+    "THB": 2.45,
+    "GBP": 113.0,
+    "JPY": 0.60,
+    "CNY": 12.3,
+    "KRW": 0.064,
+    "VND": 0.0035,
+    "IDR": 0.0054,
+    "INR": 1.07,
+    "CZK": 3.9,
+    "HUF": 0.24,
+    "PLN": 22.5,
+    "CHF": 101.0,
+}
+
 
 @dataclass(slots=True)
 class TripRequest:
@@ -1032,7 +1059,7 @@ class TravelPlanner:
         budget_meta = self.interpret_budget_text(request.budget_text)
         if profile.key == "generic" and profile.country not in {"—", "", None} and not is_ru_or_cis_country(profile.country):
             note = (
-                f"Ориентир по бюджету для {profile.display_name} лучше проверять по live-ценам в валюте {profile.currency}. "
+                f"Ориентир по бюджету для {profile.display_name} лучше проверять по live-ценам. "
                 "Для международных направлений без локального профиля бот не будет придумывать грубую смету."
             )
             return (
@@ -1041,10 +1068,10 @@ class TravelPlanner:
                         note,
                         "• Сначала уточните жильё, транспорт и формат активностей.",
                         "• После этого проверьте цены по ссылкам в разделах билетов, жилья и дороги.",
-                        f"• Итого ориентир: нужна проверка цен в {profile.currency}.",
+                        "• Итого ориентир: нужна проверка цен в рублях по живым предложениям.",
                     ]
                 ),
-                f"нужна проверка цен в {profile.currency}",
+                "нужна проверка цен в рублях",
             )
 
         multiplier = {
@@ -1073,6 +1100,9 @@ class TravelPlanner:
 
         total_low = lodging_low + food_low + local_low + activities_low + transport_low
         total_high = lodging_high + food_high + local_high + activities_high + transport_high
+        local_currency = (profile.currency or "RUB").upper()
+        total_low_rub = self._convert_to_rub(total_low, local_currency)
+        total_high_rub = self._convert_to_rub(total_high, local_currency)
 
         header = (
             f"Ориентир на {group_size} чел. / {request.days_count} дн."
@@ -1081,14 +1111,19 @@ class TravelPlanner:
         lines = [
             header,
             f"• Как понял бюджет: {budget_meta.display_text}",
-            transport_line,
-            f"• Проживание: {self._format_money(lodging_low, profile.currency)} – {self._format_money(lodging_high, profile.currency)}",
-            f"• Еда: {self._format_money(food_low, profile.currency)} – {self._format_money(food_high, profile.currency)}",
-            f"• Локальный транспорт: {self._format_money(local_low, profile.currency)} – {self._format_money(local_high, profile.currency)}",
-            f"• Активности / входные билеты: {self._format_money(activities_low, profile.currency)} – {self._format_money(activities_high, profile.currency)}",
-            f"• Итого ориентир: {self._format_money(total_low, profile.currency)} – {self._format_money(total_high, profile.currency)}",
+            f"• Формат трат: {self._budget_style_note(budget_level)}",
+            self._format_budget_line("Дорога", transport_low, transport_high, local_currency, suffix=" (грубая оценка без live-цен)") if request.origin != "не указано" else "• Дорога: город выезда не указан — пока без учета транспорта.",
+            self._format_budget_line("Проживание", lodging_low, lodging_high, local_currency),
+            self._format_budget_line("Еда", food_low, food_high, local_currency),
+            self._format_budget_line("Локальный транспорт", local_low, local_high, local_currency),
+            self._format_budget_line("Активности / входные билеты", activities_low, activities_high, local_currency),
+            f"• Итого ориентир: {self._format_money(total_low_rub, 'RUB')} – {self._format_money(total_high_rub, 'RUB')}",
         ]
-        total_line = f"{self._format_money(total_low, profile.currency)} – {self._format_money(total_high, profile.currency)}"
+        if local_currency != "RUB":
+            lines.append(
+                f"• В местной валюте: {self._format_money(total_low, local_currency)} – {self._format_money(total_high, local_currency)}"
+            )
+        total_line = f"{self._format_money(total_low_rub, 'RUB')} – {self._format_money(total_high_rub, 'RUB')}"
         return "\n".join(lines), total_line
 
     @staticmethod
@@ -1126,3 +1161,33 @@ class TravelPlanner:
             "CHF": "CHF",
         }.get((currency or "LOCAL").upper(), currency or "LOCAL")
         return f"{value:,.0f}".replace(",", " ") + f" {symbol}"
+
+    @staticmethod
+    def _convert_to_rub(value: int, currency: str) -> int:
+        rate = APPROX_RUB_RATES.get((currency or "RUB").upper(), 1.0)
+        return int(round(value * rate))
+
+    def _format_budget_line(
+        self,
+        title: str,
+        low: int,
+        high: int,
+        currency: str,
+        *,
+        suffix: str = "",
+    ) -> str:
+        low_rub = self._convert_to_rub(low, currency)
+        high_rub = self._convert_to_rub(high, currency)
+        line = f"• {title}: {self._format_money(low_rub, 'RUB')} – {self._format_money(high_rub, 'RUB')}"
+        if (currency or "RUB").upper() != "RUB":
+            line += f" (≈ {self._format_money(low, currency)} – {self._format_money(high, currency)})"
+        return line + suffix
+
+    @staticmethod
+    def _budget_style_note(budget_level: str) -> str:
+        notes = {
+            "эконом": "экономный отдых: базовое жильё, осторожнее с такси и платными активностями, опора на пешие маршруты и недорогую еду",
+            "бизнес": "комфортный отдых: хороший отель, часть перемещений на такси, кафе и рестораны среднего уровня, 1–2 платные активности",
+            "первый класс": "свободный комфорт: сильнее упор на удобное жильё, прямые переезды, хорошие рестораны и платные активности без жёсткой экономии",
+        }
+        return notes.get(budget_level, notes["бизнес"])

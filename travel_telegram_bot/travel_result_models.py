@@ -16,7 +16,7 @@ class TravelSearchResult:
     note: str = ""
 
 
-def trim_results(results: list[TravelSearchResult], *, limit: int = 3) -> list[TravelSearchResult]:
+def trim_results(results: list[TravelSearchResult], *, limit: int = 4) -> list[TravelSearchResult]:
     return [result for result in results if result.url][:limit]
 
 

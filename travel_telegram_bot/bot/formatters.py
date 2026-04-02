@@ -117,7 +117,7 @@ class TripFormatter:
         lang = self._trip_language(trip)
         category_title = self._category_title(column, lang)
         lines = [f"<b>{category_title}</b>"]
-        for result in results[:3]:
+        for result in results[:4]:
             clean_title = self._clean_result_title(result.title, category_title)
             link_url = html.escape(result.url, quote=True)
             lines.append(f"• <b>{html.escape(clean_title)}</b> — <a href=\"{link_url}\">{html.escape(tr(lang, 'open_link'))}</a>")

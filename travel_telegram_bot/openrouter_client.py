@@ -7,7 +7,7 @@ import urllib.request
 from dataclasses import dataclass
 
 from llm_provider_pool import LLMProvider
-from travel_planner import BudgetInterpretation, TripPlan, TripRequest
+from travel_planner import BudgetInterpretation, TripPlan, TripRequest, TravelPlanner
 
 
 @dataclass(slots=True)
@@ -57,6 +57,27 @@ def _extract_json_object(text: str) -> dict:
         return json.loads(brace.group(1))
     except json.JSONDecodeError as exc:
         raise OpenRouterError(f"Invalid JSON from LLM: {exc}") from exc
+
+
+def _coerce_trip_plan(obj: dict, request: TripRequest) -> TripPlan:
+    fallback_plan = TravelPlanner().generate_plan_heuristic(request)
+    field_names = (
+        "context_text",
+        "itinerary_text",
+        "logistics_text",
+        "stay_text",
+        "alternatives_text",
+        "budget_breakdown_text",
+        "budget_total_text",
+    )
+    values: dict[str, str] = {}
+    for field_name in field_names:
+        raw_value = obj.get(field_name)
+        if isinstance(raw_value, str) and raw_value.strip():
+            values[field_name] = raw_value.strip()
+            continue
+        values[field_name] = getattr(fallback_plan, field_name)
+    return TripPlan(**values)
 
 
 def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> dict:
@@ -204,28 +225,7 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
         raise OpenRouterError(f"Unexpected OpenRouter response: {raw[:5000]}") from exc
 
     obj = _extract_json_object(content)
-    required = [
-        "context_text",
-        "itinerary_text",
-        "logistics_text",
-        "stay_text",
-        "alternatives_text",
-        "budget_breakdown_text",
-        "budget_total_text",
-    ]
-    missing = [key for key in required if not isinstance(obj.get(key), str) or not obj.get(key).strip()]
-    if missing:
-        raise OpenRouterError(f"LLM JSON missing fields: {', '.join(missing)}")
-
-    return TripPlan(
-        context_text=obj["context_text"].strip(),
-        itinerary_text=obj["itinerary_text"].strip(),
-        logistics_text=obj["logistics_text"].strip(),
-        stay_text=obj["stay_text"].strip(),
-        alternatives_text=obj["alternatives_text"].strip(),
-        budget_breakdown_text=obj["budget_breakdown_text"].strip(),
-        budget_total_text=obj["budget_total_text"].strip(),
-    )
+    return _coerce_trip_plan(obj, request)
 
 
 def generate_trip_plan_with_provider(provider: LLMProvider, request: TripRequest) -> TripPlan:

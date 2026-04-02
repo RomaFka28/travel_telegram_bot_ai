@@ -90,6 +90,7 @@ class TravelpayoutsFlightProvider:
                     start_date=date_range[0].isoformat() if date_range else None,
                     end_date=date_range[1].isoformat() if date_range and not one_way else None,
                     one_way=one_way,
+                    adults=group_size,
                 )
             except TravelpayoutsError:
                 search_url = "https://www.aviasales.ru"
@@ -105,7 +106,7 @@ class TravelpayoutsFlightProvider:
             else f"Travelpayouts / Aviasales: \u0441\u0432\u0435\u0436\u0438\u0435 \u0446\u0435\u043d\u044b \u0434\u043b\u044f {normalized_origin} -> {normalized_destination}"
         )
         lines = [route_label]
-        for index, result in enumerate(results[:3], start=1):
+        for index, result in enumerate(results[:4], start=1):
             parts = [result.price_text]
             if result.dates:
                 parts.append(result.dates)
@@ -160,6 +161,7 @@ class TravelpayoutsFlightProvider:
                 start_date=date_range[0].isoformat() if date_range else None,
                 end_date=date_range[1].isoformat() if date_range and not one_way else None,
                 one_way=one_way,
+                adults=group_size,
             )
         except TravelpayoutsError as exc:
             return [
@@ -173,7 +175,7 @@ class TravelpayoutsFlightProvider:
             ]
 
         results: list[TravelSearchResult] = []
-        for label, offer in self._prioritize_offers(offers)[:3]:
+        for label, offer in self._prioritize_offers(offers)[:4]:
             transfers = "без пересадок" if offer.number_of_changes == 0 else f"{offer.number_of_changes} перес."
             results.append(
                 TravelSearchResult(
@@ -187,7 +189,7 @@ class TravelpayoutsFlightProvider:
                     note=transfers,
                 )
             )
-        return trim_results(results)
+        return trim_results(results, limit=4)
 
     def _build_search_url(
         self,
@@ -197,10 +199,18 @@ class TravelpayoutsFlightProvider:
         start_date: str | None,
         end_date: str | None,
         one_way: bool = False,
+        adults: int = 1,
     ) -> str:
         route_origin = origin_code.strip().upper()
         route_destination = destination_code.strip().upper()
-        if one_way:
+        passengers = max(1, min(int(adults or 1), 9))
+        if one_way and start_date:
+            base_url = (
+                "https://www.aviasales.ru/search/"
+                f"{route_origin}{start_date[8:10]}{start_date[5:7]}"
+                f"{route_destination}{passengers}"
+            )
+        elif one_way:
             query_params = {"origin_iata": route_origin, "destination_iata": route_destination}
             if start_date:
                 query_params["depart_date"] = start_date
@@ -209,7 +219,7 @@ class TravelpayoutsFlightProvider:
             base_url = (
                 "https://www.aviasales.ru/search/"
                 f"{route_origin}{start_date[8:10]}{start_date[5:7]}"
-                f"{route_destination}{end_date[8:10]}{end_date[5:7]}1"
+                f"{route_destination}{end_date[8:10]}{end_date[5:7]}{passengers}"
             )
         else:
             base_url = "https://www.aviasales.ru/?" + urllib.parse.urlencode(
@@ -301,7 +311,7 @@ class TravelpayoutsFlightProvider:
             ("sorting", "price"),
             ("direct", "false"),
             ("currency", "rub"),
-            ("limit", "5"),
+            ("limit", "20"),
             ("page", "1"),
             ("one_way", "true" if one_way else "false"),
             ("market", "ru"),
@@ -327,7 +337,7 @@ class TravelpayoutsFlightProvider:
             ("destination", destination_code),
             ("currency", "rub"),
             ("page", "1"),
-            ("limit", "5"),
+            ("limit", "20"),
             ("sorting", "price"),
             ("one_way", "true" if one_way else "false"),
             ("market", "ru"),
