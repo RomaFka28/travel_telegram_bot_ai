@@ -1,6 +1,8 @@
 ﻿from __future__ import annotations
 
 import logging
+from pathlib import Path
+from urllib.parse import urlparse
 
 from telegram import BotCommand
 from telegram.ext import (
@@ -37,6 +39,15 @@ from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient, Travelp
 from travel_planner import TravelPlanner
 
 
+def _database_target_label(database: Database) -> str:
+    if database.is_postgres:
+        parsed = urlparse(database.dsn)
+        host = parsed.hostname or "unknown-host"
+        db_name = (parsed.path or "/").lstrip("/") or "postgres"
+        return f"postgres host={host} db={db_name}"
+    return f"sqlite path={Path(database.dsn).resolve()}"
+
+
 async def post_init(application) -> None:
     commands = [
         BotCommand("start", "Как пользоваться ботом в чате"),
@@ -69,8 +80,9 @@ def build_application():
     database = Database(settings.database_dsn)
     database.init_db()
     logging.getLogger(__name__).info(
-        "Database backend ready: database_backend=%s",
+        "Database backend ready: database_backend=%s target=%s",
         "postgres" if database.is_postgres else "sqlite",
+        _database_target_label(database),
     )
     planner: TravelPlanner
     providers = build_provider_list(
