@@ -148,6 +148,14 @@ class TravelpayoutsFlightProvider:
                     end_date=date_range[1].isoformat(),
                     one_way=one_way,
                 )
+                direct_offers = self._search_prices_for_dates(
+                    origin_code=origin_match.code,
+                    destination_code=destination_match.code,
+                    start_date=date_range[0].isoformat(),
+                    end_date=date_range[1].isoformat(),
+                    one_way=one_way,
+                    direct_only=True,
+                )
             else:
                 offers = self._search_latest_prices(
                     origin_code=origin_match.code,
@@ -155,6 +163,14 @@ class TravelpayoutsFlightProvider:
                     dates_text=dates_text,
                     one_way=one_way,
                 )
+                direct_offers = self._search_latest_prices(
+                    origin_code=origin_match.code,
+                    destination_code=destination_match.code,
+                    dates_text=dates_text,
+                    one_way=one_way,
+                    direct_only=True,
+                )
+            offers = self._merge_offers(offers, direct_offers)
             search_url = self._build_search_url(
                 origin_code=origin_match.code,
                 destination_code=destination_match.code,
@@ -303,13 +319,14 @@ class TravelpayoutsFlightProvider:
         start_date: str,
         end_date: str,
         one_way: bool = False,
+        direct_only: bool = False,
     ) -> list[FlightOffer]:
         params = [
             ("origin", origin_code),
             ("destination", destination_code),
             ("departure_at", start_date),
             ("sorting", "price"),
-            ("direct", "false"),
+            ("direct", "true" if direct_only else "false"),
             ("currency", "rub"),
             ("limit", "20"),
             ("page", "1"),
@@ -331,6 +348,7 @@ class TravelpayoutsFlightProvider:
         destination_code: str,
         dates_text: str,
         one_way: bool = False,
+        direct_only: bool = False,
     ) -> list[FlightOffer]:
         params: list[tuple[str, str]] = [
             ("origin", origin_code),
@@ -339,6 +357,7 @@ class TravelpayoutsFlightProvider:
             ("page", "1"),
             ("limit", "20"),
             ("sorting", "price"),
+            ("direct", "true" if direct_only else "false"),
             ("one_way", "true" if one_way else "false"),
             ("market", "ru"),
             ("token", self._api_key),
@@ -383,6 +402,21 @@ class TravelpayoutsFlightProvider:
             key=lambda offer: (offer.value, offer.number_of_changes, offer.depart_date, offer.return_date),
         )
 
+    def _merge_offers(self, *offer_groups: list[FlightOffer]) -> list[FlightOffer]:
+        merged: list[FlightOffer] = []
+        seen: set[tuple[int, int, str, str]] = set()
+        for offers in offer_groups:
+            for offer in offers:
+                identity = self._offer_identity(offer)
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                merged.append(offer)
+        return sorted(
+            merged,
+            key=lambda offer: (offer.value, offer.number_of_changes, offer.depart_date, offer.return_date),
+        )
+
     @staticmethod
     def _offer_identity(offer: FlightOffer) -> tuple[int, int, str, str]:
         return (offer.value, offer.number_of_changes, offer.depart_date, offer.return_date)
@@ -407,9 +441,10 @@ class TravelpayoutsFlightProvider:
             identity = self._offer_identity(offer)
             if identity in seen:
                 continue
-            prioritized.append(("Еще вариант", offer))
+            label = "Еще вариант" if len(prioritized) == 2 else "Еще вариант 2"
+            prioritized.append((label, offer))
             seen.add(identity)
-            if len(prioritized) >= 3:
+            if len(prioritized) >= 4:
                 break
         return prioritized
 
