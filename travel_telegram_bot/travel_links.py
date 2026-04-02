@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
+import json
 import re
 import urllib.parse
+import urllib.request
 from datetime import date
 
 from travel_locale import detect_route_locale
@@ -191,21 +193,50 @@ def _ticket_links(destination: str, origin: str | None, start_date: str | None, 
     if not normalized_destination:
         return []
 
-    params: dict[str, str] = {"destination": normalized_destination}
-    if normalized_origin:
-        params["origin"] = normalized_origin
-    if start_date:
-        params["depart_date"] = start_date
-    if end_date and end_date != start_date:
-        params["return_date"] = end_date
-
-    if params.get("origin") and params.get("depart_date"):
+    origin_code = _resolve_iata_code(normalized_origin) if normalized_origin else ""
+    destination_code = _resolve_iata_code(normalized_destination)
+    if origin_code and destination_code:
+        params: dict[str, str | int] = {
+            "origin_iata": origin_code,
+            "destination_iata": destination_code,
+            "adults": 1,
+        }
+        if start_date:
+            params["depart_date"] = start_date
+        if end_date and end_date != start_date:
+            params["return_date"] = end_date
+        else:
+            params["one_way"] = 1
         url = "https://www.aviasales.ru/search?" + urllib.parse.urlencode(params)
-    elif params.get("origin"):
-        url = "https://www.aviasales.ru/search?" + urllib.parse.urlencode({"origin": params["origin"], "destination": params["destination"]})
     else:
         url = "https://www.aviasales.ru/"
     return [("✈️ Aviasales", url)]
+
+
+def _resolve_iata_code(term: str | None) -> str:
+    normalized = normalized_search_value(term)
+    if not normalized:
+        return ""
+    params = [
+        ("term", normalized),
+        ("locale", "ru"),
+        ("types[]", "city"),
+        ("types[]", "airport"),
+    ]
+    url = "https://autocomplete.travelpayouts.com/places2?" + urllib.parse.urlencode(params)
+    request = urllib.request.Request(url, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=8) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+    except Exception:
+        return ""
+    if not isinstance(payload, list):
+        return ""
+    for item in payload:
+        code = str(item.get("code") or "").strip().upper()
+        if code:
+            return code
+    return ""
 
 
 def _housing_links(
@@ -214,11 +245,18 @@ def _housing_links(
     end_date: str | None,
     group_size: int = 2,
     budget_text: str = "",
+    context_text: str = "",
 ) -> list[tuple[str, str]]:
     normalized_destination = normalized_search_value(destination)
     if not normalized_destination:
         return []
     budget_level = _normalize_budget_level(budget_text)
+    context_lowered = (context_text or "").lower()
+    wants_house = any(keyword in context_lowered for keyword in ("дом", "вилла", "коттедж", "house", "villa", "cottage"))
+    wants_apartment = any(
+        keyword in context_lowered for keyword in ("квартир", "апарт", "апартамент", "студи", "flat", "apartment")
+    )
+    wants_home_style = wants_house or wants_apartment
 
     encoded_destination = urllib.parse.quote_plus(normalized_destination)
     if _is_ru_cis_destination(normalized_destination):
@@ -258,7 +296,20 @@ def _housing_links(
             yandex_params["checkoutDate"] = end_date
         yandex_base = f"https://travel.yandex.ru/hotels/{yandex_path or _transliterate_slug(normalized_destination)}/"
         yandex_url = yandex_base + "?" + urllib.parse.urlencode(yandex_params)
+        airbnb_url = "https://www.airbnb.ru/s/" + urllib.parse.quote(normalized_destination) + "/homes"
+        if start_date:
+            airbnb_params: dict[str, str] = {"checkin": start_date, "adults": str(max(1, group_size))}
+            if end_date:
+                airbnb_params["checkout"] = end_date
+            airbnb_url += "?" + urllib.parse.urlencode(airbnb_params)
 
+        if wants_home_style:
+            return [
+                ("🏠 Airbnb", airbnb_url),
+                ("🏠 Суточно", sutochno_url),
+                ("🧳 Яндекс Путешествия", yandex_url),
+                ("🏨 Островок", ostrovok_url),
+            ]
         if budget_level == "первый класс":
             return [
                 ("🧳 Яндекс Путешествия", yandex_url),
@@ -282,7 +333,7 @@ def _housing_links(
         search_hint = f"{normalized_destination} luxury hotel"
     elif budget_level == "бизнес":
         search_hint = f"{normalized_destination} boutique hotel"
-    elif group_size >= 4:
+    elif wants_home_style or group_size >= 4:
         search_hint = f"{normalized_destination} apartment"
 
     booking_params = {"ss": search_hint}
@@ -291,8 +342,27 @@ def _housing_links(
     if end_date:
         booking_params["checkout"] = end_date
     booking_url = "https://www.booking.com/searchresults.html?" + urllib.parse.urlencode(booking_params)
+    booking_homes_url = "https://www.booking.com/searchresults.html?" + urllib.parse.urlencode(
+        {
+            **booking_params,
+            "nflt": "ht_id=201",
+        }
+    )
     agoda_url = "https://www.agoda.com/search?" + urllib.parse.urlencode({"city": search_hint})
     tripadvisor_url = "https://www.tripadvisor.com/Search?" + urllib.parse.urlencode({"q": f"hotels {search_hint}"})
+    airbnb_url = "https://www.airbnb.ru/s/" + urllib.parse.quote(normalized_destination) + "/homes"
+    if start_date:
+        airbnb_params = {"checkin": start_date, "adults": str(max(1, group_size))}
+        if end_date:
+            airbnb_params["checkout"] = end_date
+        airbnb_url += "?" + urllib.parse.urlencode(airbnb_params)
+    if wants_home_style:
+        return [
+            ("🏠 Airbnb", airbnb_url),
+            ("🏡 Booking Homes", booking_homes_url),
+            ("🛎 Agoda", agoda_url),
+            ("🧭 Tripadvisor Rentals", "https://www.tripadvisor.com/Rentals"),
+        ]
     if budget_level == "эконом":
         return [
             ("🛎 Agoda", agoda_url),
@@ -471,7 +541,14 @@ def build_links_map(
         if ticket_links:
             links["tickets"] = ticket_links
     if "housing" in needs:
-        housing_links = _housing_links(normalized_destination, start_date, end_date, group_size, budget_text)
+        housing_links = _housing_links(
+            normalized_destination,
+            start_date,
+            end_date,
+            group_size,
+            budget_text,
+            context_text,
+        )
         if housing_links:
             links["housing"] = housing_links
     if "excursions" in needs:
@@ -502,6 +579,7 @@ def build_structured_link_results(
         origin,
         group_size=group_size,
         context_text=context_text,
+        budget_text=budget_text,
     )
     results: dict[str, list[TravelSearchResult]] = {
         "tickets": [],
@@ -562,6 +640,7 @@ def build_links_text(
     *,
     group_size: int = 2,
     context_text: str = "",
+    budget_text: str = "",
 ) -> str:
     links_map = build_links_map(
         destination,
@@ -569,6 +648,7 @@ def build_links_text(
         origin,
         group_size=group_size,
         context_text=context_text,
+        budget_text=budget_text,
     )
     if not links_map:
         return ""

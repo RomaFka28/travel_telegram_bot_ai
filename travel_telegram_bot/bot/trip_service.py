@@ -123,6 +123,7 @@ class TripService:
             request.origin,
             group_size=request.group_size,
             context_text=context_text,
+            budget_text=request.budget_text,
         )
         return detected_needs, {
             "flight_results": trim_results(flight_results),
