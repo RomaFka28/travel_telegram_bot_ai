@@ -110,7 +110,7 @@ class Database:
         if self.is_postgres:
             return psycopg.connect(self.dsn, row_factory=dict_row)
 
-        connection = sqlite3.connect(self.dsn)
+        connection = sqlite3.connect(self.dsn, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection

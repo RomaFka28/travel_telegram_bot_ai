@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from llm_provider_pool import LLMProvider
 from travel_planner import BudgetInterpretation, TripPlan, TripRequest
 
 
@@ -54,12 +55,15 @@ def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> d
             "Use these exact string keys: "
             "context_text, itinerary_text, logistics_text, stay_text, "
             "alternatives_text, budget_breakdown_text, budget_total_text. "
-            "Use destination-appropriate currency when it is obvious; otherwise explain that local pricing needs a separate live check. "
-            "If web search is available, use fresh public information when it helps. "
-            "Do not invent exact live prices. If exact prices are unavailable, give an honest range or guidance. "
+            "When web search is available, use it to find real current place names, "
+            "top attractions, best neighbourhoods, and local tips for the exact destination. "
+            "Always use real specific place names - never generic descriptions. "
+            "Never substitute 'visit a local museum' for the actual museum name. "
+            "Use destination-appropriate currency and also provide RUB equivalent with approximate rate. "
+            "Do not invent exact live prices. If exact prices are unavailable, give an honest range. "
             "Keep itinerary_text in the format 'Day 1. ...\\nDay 2. ...'. "
             "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Total estimate:'. "
-            "budget_total_text must be a single-line total such as '≈ 900-1400 EUR per person' or 'a live pricing check is needed'."
+            "budget_total_text must be a single-line total such as '≈ 900-1400 EUR per person (≈ 90 000-140 000 ₽)'."
         )
     else:
         system = (
@@ -68,16 +72,19 @@ def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> d
             "Use these exact string keys: "
             "context_text, itinerary_text, logistics_text, stay_text, "
             "alternatives_text, budget_breakdown_text, budget_total_text. "
-            "Use destination-appropriate currency when it is obvious; otherwise explain that local pricing needs a separate live check. "
-            "If web search is available, use fresh public information when it helps. "
-            "Do not invent exact live prices. If exact prices are unavailable, give an honest range or guidance. "
+            "When web search is available, use it to find real current place names, "
+            "top attractions, best neighbourhoods, and local tips for the exact destination. "
+            "Always use real specific place names - never generic descriptions. "
+            "Never substitute 'visit a local museum' for the actual museum name. "
+            "Use destination-appropriate currency and also provide RUB equivalent with approximate rate. "
+            "Do not invent exact live prices. If exact prices are unavailable, give an honest range. "
             "Keep itinerary_text in the format 'День 1. ...\\nДень 2. ...'. "
             "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Итого ориентир:'. "
-            "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека' or 'нужна проверка live-цен'."
+            "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека'."
         )
 
     user = (
-        "Build a draft trip plan from this data:\n"
+        "Build a detailed trip plan from this data:\n"
         f"- destination: {request.destination}\n"
         f"- origin: {request.origin}\n"
         f"- dates_text: {request.dates_text}\n"
@@ -85,9 +92,20 @@ def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> d
         f"- group_size: {request.group_size}\n"
         f"- budget_text: {request.budget_text}\n"
         f"- interests_text: {request.interests_text}\n"
-        f"- notes: {request.notes}\n"
-        "Keep the plan practical for a Telegram travel bot. "
-        "Prefer concise, useful travel guidance over generic marketing language."
+        f"- notes: {request.notes}\n\n"
+        "Critical requirements:\n"
+        "1. itinerary_text must contain REAL named places - actual mountains, museums, districts, "
+        "viewpoints, restaurants, markets specific to this destination. "
+        "Never write generic phrases like 'visit a museum' or 'walk around the old town'. "
+        "Write the real name: 'Matterhorn viewpoint at Gornergrat', 'Bahnhofstrasse', 'Confiserie Sprungli'. "
+        "If web search is available, look up top attractions and hidden gems for this exact city.\n"
+        "2. Each day must have 3 named activities with one sentence explaining what makes each worth visiting.\n"
+        "3. context_text must include neighbourhood names for where to stay and 2-3 specific local facts "
+        "most travellers do not know about this destination.\n"
+        "4. stay_text must name specific districts or neighbourhoods with a reason each suits this group size and budget.\n"
+        "5. budget_breakdown_text must show amounts in local currency AND approximate RUB equivalent "
+        "using current exchange rates if destination is outside Russia.\n"
+        "6. Do not invent exact live prices. Give honest ranges. No marketing language.\n"
     )
 
     payload = {
@@ -198,6 +216,17 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
         budget_breakdown_text=obj["budget_breakdown_text"].strip(),
         budget_total_text=obj["budget_total_text"].strip(),
     )
+
+
+def generate_trip_plan_with_provider(provider: LLMProvider, request: TripRequest) -> TripPlan:
+    """Same as generate_trip_plan but uses LLMProvider instead of OpenRouterConfig."""
+    config = OpenRouterConfig(
+        api_key=provider.api_key,
+        model=provider.model,
+        base_url=provider.base_url,
+        use_web_search=provider.use_web_search,
+    )
+    return generate_trip_plan(config, request)
 
 
 def classify_budget_text(config: OpenRouterConfig, text: str) -> BudgetInterpretation:

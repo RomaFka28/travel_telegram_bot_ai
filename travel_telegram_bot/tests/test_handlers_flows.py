@@ -1,11 +1,14 @@
 ﻿import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from bot.formatters import TripFormatter
 from bot.handlers import BotHandlers
 from bot.trip_service import TripService
 from database import Database
 from housing_search import LinkOnlyHousingSearchProvider
+from llm_provider_pool import LLMProvider, LLMProviderPool
+from llm_travel_planner import LLMTravelPlanner
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from travel_result_models import TravelSearchResult
@@ -53,6 +56,16 @@ class DummyBot:
     username = "demo_trip_bot"
 
 
+class DummyChat:
+    def __init__(self, chat_id: int, chat_type: str = "group") -> None:
+        self.id = chat_id
+        self.type = chat_type
+        self.actions: list[str] = []
+
+    async def send_action(self, action: str) -> None:
+        self.actions.append(action)
+
+
 class DummyContext:
     def __init__(self, args: list[str] | None = None) -> None:
         self.args = args or []
@@ -80,7 +93,7 @@ def make_update(
     )
     update = SimpleNamespace(
         effective_message=message,
-        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
+        effective_chat=DummyChat(chat_id, chat_type),
         effective_user=user,
         callback_query=None,
     )
@@ -98,7 +111,7 @@ def make_callback_update(*, data: str, chat_id: int = 100, chat_type: str = "gro
     query = DummyCallbackQuery(data=data, user=user, message=message)
     update = SimpleNamespace(
         effective_message=message,
-        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
+        effective_chat=DummyChat(chat_id, chat_type),
         effective_user=user,
         callback_query=query,
     )
@@ -726,3 +739,539 @@ def test_trip_action_buttons_open_route_tickets_and_housing(tmp_path) -> None:
         asyncio.run(handlers.trip_action_callback(callback_update, DummyContext()))
         assert expected in callback_message.replies[-1]["text"]
         assert query.answers[-1]["text"] is not None
+
+
+def test_create_trip_from_text_offloads_blocking_work_and_sends_typing(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    update, _ = make_update(
+        text="Хочу в Казань на 3 дня, нас 2",
+        chat_id=1801,
+        chat_type="private",
+    )
+    stub_plan = handlers.planner.generate_plan(
+        handlers.planner.build_request_from_fields(
+            title="Казань • 3 дн.",
+            destination="Казань",
+            origin="Томск",
+            dates_text="12–14 июня",
+            days_count=3,
+            group_size=2,
+            budget_text="средний",
+            interests_text="город, еда",
+            notes="",
+            source_prompt="Хочу в Казань",
+            language_code="ru",
+        )
+    )
+    stub_payload = {
+        "title": "Казань • 3 дн.",
+        "destination": "Казань",
+        "origin": "Томск",
+        "dates_text": "12–14 июня",
+        "days_count": 3,
+        "group_size": 2,
+        "budget_text": "средний",
+        "interests_text": "город, еда",
+        "notes": "",
+        "source_prompt": "Хочу в Казань",
+        "context_text": stub_plan.context_text,
+        "itinerary_text": stub_plan.itinerary_text,
+        "logistics_text": stub_plan.logistics_text,
+        "stay_text": stub_plan.stay_text,
+        "alternatives_text": stub_plan.alternatives_text,
+        "budget_breakdown_text": stub_plan.budget_breakdown_text,
+        "budget_total_text": stub_plan.budget_total_text,
+        "status": "active",
+    }
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch("bot.handlers.asyncio.to_thread", new=AsyncMock(side_effect=fake_to_thread)) as to_thread_mock, patch.object(
+        handlers.planner,
+        "generate_plan",
+        return_value=stub_plan,
+    ), patch.object(
+        handlers.service,
+        "_build_trip_payload",
+        return_value=stub_payload,
+    ), patch.object(handlers.service, "_refresh_weather_for_trip", new=AsyncMock()) as refresh_mock:
+        created = asyncio.run(handlers._create_trip_from_text(update, update.effective_message.text))
+
+    assert created is True
+    assert update.effective_chat.actions == ["typing"]
+    assert to_thread_mock.await_count == 2
+    refresh_mock.assert_awaited_once()
+    assert database.get_active_trip(1801) is not None
+
+
+def test_new_trip_notes_offloads_blocking_work(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+    context.user_data["trip_draft"] = {
+        "title": "Лето",
+        "destination": "Владивосток",
+        "origin": "Томск",
+        "days_count": 5,
+        "dates_text": "12–16 июня",
+        "group_size": 4,
+        "budget_text": "средний",
+        "interests_text": "море, еда",
+    }
+    update, _ = make_update(text="купить билеты", chat_id=1802)
+    stub_plan = handlers.planner.generate_plan(
+        handlers.planner.build_request_from_fields(
+            title="Лето",
+            destination="Владивосток",
+            origin="Томск",
+            dates_text="12–16 июня",
+            days_count=5,
+            group_size=4,
+            budget_text="средний",
+            interests_text="море, еда",
+            notes="купить билеты",
+            source_prompt="Новый бриф: Владивосток, 5 дн.",
+            language_code="ru",
+        )
+    )
+    stub_payload = {
+        "title": "Лето",
+        "destination": "Владивосток",
+        "origin": "Томск",
+        "dates_text": "12–16 июня",
+        "days_count": 5,
+        "group_size": 4,
+        "budget_text": "средний",
+        "interests_text": "море, еда",
+        "notes": "купить билеты",
+        "source_prompt": "Новый бриф: Владивосток, 5 дн.",
+        "context_text": stub_plan.context_text,
+        "itinerary_text": stub_plan.itinerary_text,
+        "logistics_text": stub_plan.logistics_text,
+        "stay_text": stub_plan.stay_text,
+        "alternatives_text": stub_plan.alternatives_text,
+        "budget_breakdown_text": stub_plan.budget_breakdown_text,
+        "budget_total_text": stub_plan.budget_total_text,
+        "status": "active",
+    }
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch("bot.handlers.asyncio.to_thread", new=AsyncMock(side_effect=fake_to_thread)) as to_thread_mock, patch.object(
+        handlers.planner,
+        "generate_plan",
+        return_value=stub_plan,
+    ), patch.object(
+        handlers.service,
+        "_build_trip_payload",
+        return_value=stub_payload,
+    ), patch.object(handlers.service, "_refresh_weather_for_trip", new=AsyncMock()) as refresh_mock:
+        result = asyncio.run(handlers.new_trip_notes(update, context))
+
+    assert result is not None
+    assert to_thread_mock.await_count == 2
+    refresh_mock.assert_awaited_once()
+    assert database.get_active_trip(1802) is not None
+
+
+def test_handle_trip_edit_input_offloads_blocking_work(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(chat_id=1803)
+    asyncio.run(handlers.plan_command(create_update, DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])))
+    trip = database.get_active_trip(1803)
+    assert trip is not None
+
+    context = DummyContext()
+    context.user_data["edit_trip_id"] = int(trip["id"])
+    update, _ = make_update(text="сделай 4 дня", chat_id=1803)
+    stub_plan = handlers.planner.generate_plan(
+        handlers.service._merge_edit_request(trip, "сделай 4 дня")
+    )
+    stub_payload = {
+        "title": trip["title"],
+        "destination": trip["destination"],
+        "origin": trip["origin"],
+        "dates_text": trip["dates_text"],
+        "days_count": 4,
+        "group_size": int(trip["group_size"]),
+        "budget_text": trip["budget_text"],
+        "interests_text": trip["interests_text"],
+        "notes": trip["notes"] or "",
+        "source_prompt": trip["source_prompt"] or "",
+        "context_text": stub_plan.context_text,
+        "itinerary_text": stub_plan.itinerary_text,
+        "logistics_text": stub_plan.logistics_text,
+        "stay_text": stub_plan.stay_text,
+        "alternatives_text": stub_plan.alternatives_text,
+        "budget_breakdown_text": stub_plan.budget_breakdown_text,
+        "budget_total_text": stub_plan.budget_total_text,
+    }
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch("bot.handlers.asyncio.to_thread", new=AsyncMock(side_effect=fake_to_thread)) as to_thread_mock, patch.object(
+        handlers.planner,
+        "generate_plan",
+        return_value=stub_plan,
+    ), patch.object(
+        handlers.service,
+        "_build_trip_payload",
+        return_value=stub_payload,
+    ), patch.object(handlers.service, "_refresh_weather_for_trip", new=AsyncMock()) as refresh_mock:
+        asyncio.run(handlers.handle_trip_edit_input(update, context))
+
+    assert to_thread_mock.await_count == 2
+    refresh_mock.assert_awaited_once()
+
+
+def test_create_trip_from_text_uses_async_llm_planner_path(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    handlers.planner = LLMTravelPlanner(
+        LLMProviderPool(
+            [
+                LLMProvider(
+                    name="Groq",
+                    daily_limit=14400,
+                    api_key="groq-key",
+                    base_url="https://api.groq.com/openai/v1/chat/completions",
+                    model="llama-3.3-70b-versatile",
+                )
+            ]
+        )
+    )
+    handlers.service._planner = handlers.planner
+    update, _ = make_update(
+        text="Хочу в Казань на 3 дня, нас 2",
+        chat_id=1810,
+        chat_type="private",
+    )
+    request = handlers.planner.parse_trip_request(update.effective_message.text, language_code="ru")
+    stub_plan = TravelPlanner().generate_plan(request)
+    stub_payload = {
+        "title": request.title,
+        "destination": request.destination,
+        "origin": request.origin,
+        "dates_text": request.dates_text,
+        "days_count": request.days_count,
+        "group_size": request.group_size,
+        "budget_text": request.budget_text,
+        "interests_text": request.interests_text,
+        "notes": "",
+        "source_prompt": request.source_prompt,
+        "context_text": stub_plan.context_text,
+        "itinerary_text": stub_plan.itinerary_text,
+        "logistics_text": stub_plan.logistics_text,
+        "stay_text": stub_plan.stay_text,
+        "alternatives_text": stub_plan.alternatives_text,
+        "budget_breakdown_text": stub_plan.budget_breakdown_text,
+        "budget_total_text": stub_plan.budget_total_text,
+        "status": "active",
+    }
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch.object(
+        handlers.planner,
+        "generate_plan_llm_async",
+        new=AsyncMock(return_value=stub_plan),
+    ) as llm_async_mock, patch(
+        "bot.handlers.asyncio.to_thread",
+        new=AsyncMock(side_effect=fake_to_thread),
+    ) as to_thread_mock, patch.object(
+        handlers.service,
+        "_build_trip_payload",
+        return_value=stub_payload,
+    ), patch.object(handlers.service, "_refresh_weather_for_trip", new=AsyncMock()) as refresh_mock:
+        created = asyncio.run(handlers._create_trip_from_text(update, update.effective_message.text))
+
+    assert created is True
+    llm_async_mock.assert_awaited_once()
+    assert to_thread_mock.await_count == 1
+    refresh_mock.assert_awaited_once()
+
+
+def test_new_trip_notes_uses_async_llm_planner_path(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    handlers.planner = LLMTravelPlanner(
+        LLMProviderPool(
+            [
+                LLMProvider(
+                    name="Gemini",
+                    daily_limit=1500,
+                    api_key="gemini-key",
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                    model="gemini-2.0-flash",
+                    use_web_search=True,
+                )
+            ]
+        )
+    )
+    handlers.service._planner = handlers.planner
+    context = DummyContext()
+    context.user_data["trip_draft"] = {
+        "title": "Лето",
+        "destination": "Владивосток",
+        "origin": "Томск",
+        "days_count": 5,
+        "dates_text": "12–16 июня",
+        "group_size": 4,
+        "budget_text": "средний",
+        "interests_text": "море, еда",
+    }
+    update, _ = make_update(text="купить билеты", chat_id=1811)
+    request = handlers.planner.build_request_from_fields(
+        title="Лето",
+        destination="Владивосток",
+        origin="Томск",
+        dates_text="12–16 июня",
+        days_count=5,
+        group_size=4,
+        budget_text="средний",
+        interests_text="море, еда",
+        notes="купить билеты",
+        source_prompt="Новый бриф: Владивосток, 5 дн.",
+        language_code="ru",
+    )
+    stub_plan = TravelPlanner().generate_plan(request)
+    stub_payload = {
+        "title": request.title,
+        "destination": request.destination,
+        "origin": request.origin,
+        "dates_text": request.dates_text,
+        "days_count": request.days_count,
+        "group_size": request.group_size,
+        "budget_text": request.budget_text,
+        "interests_text": request.interests_text,
+        "notes": request.notes,
+        "source_prompt": request.source_prompt,
+        "context_text": stub_plan.context_text,
+        "itinerary_text": stub_plan.itinerary_text,
+        "logistics_text": stub_plan.logistics_text,
+        "stay_text": stub_plan.stay_text,
+        "alternatives_text": stub_plan.alternatives_text,
+        "budget_breakdown_text": stub_plan.budget_breakdown_text,
+        "budget_total_text": stub_plan.budget_total_text,
+        "status": "active",
+    }
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch.object(
+        handlers.planner,
+        "generate_plan_llm_async",
+        new=AsyncMock(return_value=stub_plan),
+    ) as llm_async_mock, patch(
+        "bot.handlers.asyncio.to_thread",
+        new=AsyncMock(side_effect=fake_to_thread),
+    ) as to_thread_mock, patch.object(
+        handlers.service,
+        "_build_trip_payload",
+        return_value=stub_payload,
+    ), patch.object(handlers.service, "_refresh_weather_for_trip", new=AsyncMock()) as refresh_mock:
+        result = asyncio.run(handlers.new_trip_notes(update, context))
+
+    assert result is not None
+    llm_async_mock.assert_awaited_once()
+    assert to_thread_mock.await_count == 1
+    refresh_mock.assert_awaited_once()
+
+
+def test_handle_trip_edit_input_uses_async_llm_planner_path(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(chat_id=1812)
+    asyncio.run(handlers.plan_command(create_update, DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])))
+    trip = database.get_active_trip(1812)
+    assert trip is not None
+
+    handlers.planner = LLMTravelPlanner(
+        LLMProviderPool(
+            [
+                LLMProvider(
+                    name="OpenRouter",
+                    daily_limit=500,
+                    api_key="openrouter-key",
+                    base_url="https://openrouter.ai/api/v1/chat/completions",
+                    model="google/gemini-2.0-flash-exp:free",
+                    use_web_search=True,
+                )
+            ]
+        )
+    )
+    handlers.service._planner = handlers.planner
+    context = DummyContext()
+    context.user_data["edit_trip_id"] = int(trip["id"])
+    update, _ = make_update(text="сделай 4 дня", chat_id=1812)
+    merged_request = handlers.service._merge_edit_request(trip, "сделай 4 дня")
+    stub_plan = TravelPlanner().generate_plan(merged_request)
+    stub_payload = {
+        "title": merged_request.title,
+        "destination": merged_request.destination,
+        "origin": merged_request.origin,
+        "dates_text": merged_request.dates_text,
+        "days_count": merged_request.days_count,
+        "group_size": merged_request.group_size,
+        "budget_text": merged_request.budget_text,
+        "interests_text": merged_request.interests_text,
+        "notes": merged_request.notes,
+        "source_prompt": merged_request.source_prompt,
+        "context_text": stub_plan.context_text,
+        "itinerary_text": stub_plan.itinerary_text,
+        "logistics_text": stub_plan.logistics_text,
+        "stay_text": stub_plan.stay_text,
+        "alternatives_text": stub_plan.alternatives_text,
+        "budget_breakdown_text": stub_plan.budget_breakdown_text,
+        "budget_total_text": stub_plan.budget_total_text,
+    }
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch.object(
+        handlers.planner,
+        "generate_plan_llm_async",
+        new=AsyncMock(return_value=stub_plan),
+    ) as llm_async_mock, patch(
+        "bot.handlers.asyncio.to_thread",
+        new=AsyncMock(side_effect=fake_to_thread),
+    ) as to_thread_mock, patch.object(
+        handlers.service,
+        "_build_trip_payload",
+        return_value=stub_payload,
+    ), patch.object(handlers.service, "_refresh_weather_for_trip", new=AsyncMock()) as refresh_mock:
+        asyncio.run(handlers.handle_trip_edit_input(update, context))
+
+    llm_async_mock.assert_awaited_once()
+    assert to_thread_mock.await_count == 1
+    refresh_mock.assert_awaited_once()
+
+
+def test_summary_command_awaits_weather_refresh(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(chat_id=1804)
+    asyncio.run(handlers.plan_command(create_update, DummyContext(args=["Хочу", "в", "Казань", "на", "3", "дня"])))
+    trip = database.get_active_trip(1804)
+    assert trip is not None
+
+    summary_update, _ = make_update(chat_id=1804)
+    with patch.object(handlers.service, "_refresh_weather_for_trip", new=AsyncMock()) as refresh_mock:
+        asyncio.run(handlers.summary_command(summary_update, DummyContext()))
+
+    refresh_mock.assert_awaited_once_with(int(trip["id"]))
+
+
+def test_handle_group_message_awaits_async_service_helpers(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    create_update, _ = make_update(text="Ребята, поедем в Казань на 3 дня", chat_id=1805)
+    asyncio.run(handlers.handle_group_message(create_update, DummyContext()))
+    active_trip = database.get_active_trip(1805)
+    assert active_trip is not None
+
+    update_message, _ = make_update(text="Давайте тогда 12–14 июня и бюджет комфорт", chat_id=1805)
+    with patch.object(handlers.service, "_rebuild_trip", new=AsyncMock()) as rebuild_mock, patch.object(
+        handlers.service,
+        "_refresh_weather_for_trip",
+        new=AsyncMock(),
+    ) as refresh_mock:
+        asyncio.run(handlers.handle_group_message(update_message, DummyContext()))
+
+    rebuild_mock.assert_awaited_once_with(int(active_trip["id"]))
+    refresh_mock.assert_awaited_once_with(int(active_trip["id"]))
+
+
+def test_handle_group_message_awaits_auto_draft_from_signal(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    trip_id = database.create_trip(
+        chat_id=1806,
+        created_by=1,
+        payload={
+            "title": "Временная поездка",
+            "destination": "Сочи",
+            "origin": "Томск",
+            "dates_text": "не указаны",
+            "days_count": 3,
+            "group_size": 2,
+            "budget_text": "средний",
+            "interests_text": "море",
+            "notes": "",
+            "source_prompt": "",
+            "status": "active",
+        },
+    )
+    database.archive_active_trip(1806)
+    database.set_selected_trip(1806, None)
+
+    update, _ = make_update(text="Ребята, поедем в Казань на 3 дня", chat_id=1806)
+    with patch.object(handlers.service, "auto_draft_from_signal", new=AsyncMock(return_value=trip_id)) as autodraft_mock:
+        asyncio.run(handlers.handle_group_message(update, DummyContext()))
+
+    autodraft_mock.assert_awaited_once()
+
+
+def test_handle_group_message_cooldown_allows_only_one_reply_under_concurrency(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+    update1, message1 = make_update(text="Ребята, куда поедем в июле на пару дней?", chat_id=1807)
+    update2, message2 = make_update(text="Ребята, куда поедем в июле на пару дней?", chat_id=1807)
+    signal = SimpleNamespace(
+        has_travel_intent=True,
+        destination=None,
+        destination_votes=[("Казань", 2)],
+        origin=None,
+        dates_text=None,
+        budget_hint=None,
+        interests=[],
+        detected_needs=[],
+        raw_text="Голосуем за направление",
+    )
+
+    async def run_test() -> None:
+        with patch("bot.group_chat_analyzer.GroupChatAnalyzer") as analyzer_cls:
+            analyzer = analyzer_cls.return_value
+            analyzer.analyze_messages.return_value = signal
+            await asyncio.gather(
+                handlers.handle_group_message(update1, context),
+                handlers.handle_group_message(update2, context),
+            )
+
+    asyncio.run(run_test())
+
+    reply_count = len(message1.replies) + len(message2.replies)
+    assert reply_count == 1
+
+
+def test_handle_group_message_keeps_both_recent_messages_under_concurrency(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+    update1, _ = make_update(text="Ребята, давайте летом куда-нибудь уедем на выходные", chat_id=1808)
+    update2, _ = make_update(text="Может тогда в Казань с пятницы по воскресенье", chat_id=1808)
+    signal = SimpleNamespace(
+        has_travel_intent=False,
+        destination=None,
+        destination_votes=[],
+        origin=None,
+        dates_text=None,
+        budget_hint=None,
+        interests=[],
+        detected_needs=[],
+        raw_text="",
+    )
+
+    async def run_test() -> None:
+        with patch("bot.group_chat_analyzer.GroupChatAnalyzer") as analyzer_cls:
+            analyzer = analyzer_cls.return_value
+            analyzer.analyze_messages.return_value = signal
+            await asyncio.gather(
+                handlers.handle_group_message(update1, context),
+                handlers.handle_group_message(update2, context),
+            )
+
+    asyncio.run(run_test())
+
+    recent_messages = context.chat_data["recent_group_messages"]
+    assert len(recent_messages) == 2
+    assert update1.effective_message.text in recent_messages
+    assert update2.effective_message.text in recent_messages

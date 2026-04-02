@@ -1,3 +1,5 @@
+import threading
+
 from database import Database
 from travel_planner import TravelPlanner
 
@@ -153,3 +155,23 @@ def test_delete_trip_removes_trip_completely(tmp_path) -> None:
     trip_id = database.create_trip(chat_id=16, created_by=1, payload=_sample_payload("Казань"))
     assert database.delete_trip(16, trip_id) is True
     assert database.get_trip_by_id(trip_id) is None
+
+
+def test_sqlite_connection_can_be_used_from_another_thread(tmp_path) -> None:
+    database = Database(str(tmp_path / "threadsafe.db"))
+    connection = database._connect()
+    result: dict[str, object] = {}
+
+    def run_query() -> None:
+        try:
+            result["value"] = connection.execute("SELECT 1").fetchone()[0]
+        except Exception as exc:
+            result["error"] = exc
+
+    worker = threading.Thread(target=run_query)
+    worker.start()
+    worker.join()
+    connection.close()
+
+    assert result.get("error") is None
+    assert result["value"] == 1

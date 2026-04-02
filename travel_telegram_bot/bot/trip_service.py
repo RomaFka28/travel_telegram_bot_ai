@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -245,7 +246,7 @@ class TripService:
             language_code=self._db.get_chat_language(int(trip["chat_id"])),
         )
 
-    def _rebuild_trip(self, trip_id: int) -> None:
+    async def _rebuild_trip(self, trip_id: int) -> None:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
             return
@@ -253,17 +254,23 @@ class TripService:
             **self._request_from_trip_row(trip),
             language_code=self._db.get_chat_language(int(trip["chat_id"])),
         )
-        plan = self._planner.generate_plan(request)
-        self._db.update_trip_fields(trip_id, self._build_trip_payload(request, plan, notes_override=trip["notes"] or ""))
+        plan = await asyncio.to_thread(self._planner.generate_plan, request)
+        payload = await asyncio.to_thread(
+            self._build_trip_payload,
+            request,
+            plan,
+            notes_override=trip["notes"] or "",
+        )
+        self._db.update_trip_fields(trip_id, payload)
 
-    def _refresh_weather_for_trip(self, trip_id: int) -> None:
+    async def _refresh_weather_for_trip(self, trip_id: int) -> None:
         trip = self._db.get_trip_by_id(trip_id)
         if not trip:
             return
         destination = trip["destination"] or ""
         dates_text = trip["dates_text"] or ""
         try:
-            summary = fetch_weather_summary(destination, dates_text)
+            summary = await asyncio.to_thread(fetch_weather_summary, destination, dates_text)
         except WeatherError:
             summary = None
         if summary:
@@ -275,7 +282,7 @@ class TripService:
                 },
             )
 
-    def auto_draft_from_signal(
+    async def auto_draft_from_signal(
         self,
         chat_id: int,
         created_by: int | None,
@@ -300,11 +307,11 @@ class TripService:
             source_prompt=signal.raw_text,
             language_code=self._db.get_chat_language(chat_id),
         )
-        plan = self._planner.generate_plan(request)
-        payload = self._build_trip_payload(request, plan)
+        plan = await asyncio.to_thread(self._planner.generate_plan, request)
+        payload = await asyncio.to_thread(self._build_trip_payload, request, plan)
         trip_id = self._db.create_trip(chat_id, created_by, payload)
         self._db.set_selected_trip(chat_id, trip_id)
-        self._refresh_weather_for_trip(trip_id)
+        await self._refresh_weather_for_trip(trip_id)
         return trip_id
 
     @staticmethod

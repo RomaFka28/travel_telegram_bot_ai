@@ -99,7 +99,7 @@ travel_telegram_bot/
 2. Подготовьте `.env` с переменными:
    - `TELEGRAM_BOT_TOKEN`
    - `DATABASE_URL` или `DATABASE_PATH`
-   - `OPENROUTER_API_KEY` и `OPENROUTER_MODEL`, если нужен `/planai`
+   - `OPENROUTER_API_KEY` и `OPENROUTER_MODEL`, если нужен LLM-планировщик в `/plan`
    - `OPENROUTER_WEB_SEARCH=true`, если хотите, чтобы LLM подтягивал более свежую travel-информацию через OpenRouter web search
    - `TRAVELPAYOUTS_API_KEY`, если хотите цены на билеты через Aviasales Data API
    - `TRAVELPAYOUTS_MARKER` и `TRAVELPAYOUTS_TRS`, если хотите получать партнёрские ссылки через Travelpayouts partner links API
@@ -121,7 +121,7 @@ python app.py
 В репозитории уже есть `render.yaml`. Для деплоя нужны:
 - `TELEGRAM_BOT_TOKEN`
 - `DATABASE_URL` для Postgres в production
-- `OPENROUTER_API_KEY`, если используется `/planai`
+- `OPENROUTER_API_KEY`, если используется LLM-планировщик в `/plan`
 - `OPENROUTER_MODEL=stepfun/step-3.5-flash:free`, если нужен быстрый бесплатный LLM-режим
 - `OPENROUTER_WEB_SEARCH=true`, если нужен доступ модели к web search для более свежих travel-ответов
 - `TRAVELPAYOUTS_API_KEY`, если хотите подтягивать цены на билеты через Travelpayouts / Aviasales

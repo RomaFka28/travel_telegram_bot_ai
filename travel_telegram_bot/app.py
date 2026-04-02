@@ -30,7 +30,8 @@ from config import load_settings
 from database import Database
 from health_server import start_if_render
 from housing_search import build_housing_provider
-from llm_travel_planner import LLMPlannerSettings, LLMTravelPlanner
+from llm_provider_pool import LLMProviderPool, build_provider_list
+from llm_travel_planner import LLMTravelPlanner
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient, TravelpayoutsPartnerLinksConfig
 from travel_planner import TravelPlanner
@@ -68,16 +69,23 @@ def build_application():
     database = Database(settings.database_dsn)
     database.init_db()
     planner: TravelPlanner
-    if settings.openrouter_api_key:
-        planner = LLMTravelPlanner(
-            LLMPlannerSettings(
-                openrouter_api_key=settings.openrouter_api_key,
-                openrouter_model=settings.openrouter_model,
-                openrouter_web_search=settings.openrouter_web_search,
-            )
+    providers = build_provider_list(
+        openrouter_api_key=settings.openrouter_api_key,
+        openrouter_model=settings.openrouter_model,
+        openrouter_web_search=settings.openrouter_web_search,
+        gemini_api_key=settings.gemini_api_key,
+        groq_api_key=settings.groq_api_key,
+    )
+    if providers:
+        pool = LLMProviderPool(providers)
+        planner = LLMTravelPlanner(pool)
+        logging.getLogger(__name__).info(
+            "LLM provider pool ready: %s",
+            " -> ".join(f"{provider.name}({provider.daily_limit}/day)" for provider in providers),
         )
     else:
         planner = TravelPlanner()
+        logging.getLogger(__name__).info("No LLM API keys configured, using heuristic planner")
     formatter = TripFormatter(database)
     partner_links = TravelpayoutsPartnerLinksClient(
         TravelpayoutsPartnerLinksConfig(
@@ -98,6 +106,7 @@ def build_application():
         ApplicationBuilder()
         .token(settings.telegram_token)
         .post_init(post_init)
+        .concurrent_updates(True)
         .build()
     )
 
@@ -126,7 +135,6 @@ def build_application():
     app.add_handler(CommandHandler("tickets", handlers.tickets_command))
     app.add_handler(CommandHandler("hotels", handlers.hotels_command))
     app.add_handler(CommandHandler("plan", handlers.plan_command))
-    app.add_handler(CommandHandler("planai", handlers.plan_ai_command))
     app.add_handler(CommandHandler("trips", handlers.trips_command))
     app.add_handler(CommandHandler("select_trip", handlers.select_trip_command))
     app.add_handler(CommandHandler("delete_trip", handlers.delete_trip_command))
