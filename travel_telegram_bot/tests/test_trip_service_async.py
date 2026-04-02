@@ -159,3 +159,27 @@ def test_auto_draft_from_signal_uses_to_thread_and_awaits_weather_refresh(tmp_pa
     payload_mock.assert_called_once()
     refresh_mock.assert_awaited_once_with(trip_id)
     assert to_thread_mock.await_count == 2
+
+
+def test_build_entry_notice_is_short_and_requests_only_basic_identity(tmp_path) -> None:
+    _, planner, service = build_service(tmp_path)
+    request = planner.build_request_from_fields(
+        title="Стамбул",
+        destination="Стамбул",
+        origin="Тбилиси",
+        dates_text="12 июня",
+        days_count=3,
+        group_size=1,
+        budget_text="бизнес",
+        interests_text="еда",
+        notes="",
+        source_prompt="Хочу в Стамбул",
+        language_code="ru",
+    )
+
+    notice = service._build_entry_notice(request)
+
+    assert "гражданство" in notice
+    assert "по какому документу" in notice
+    assert "срок действия паспорта" not in notice
+    assert "дополнительные документы" not in notice

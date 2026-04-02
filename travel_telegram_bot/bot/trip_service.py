@@ -177,6 +177,15 @@ class TripService:
         destination_country = route_locale.destination_country or "страны назначения"
         return "\n".join(
             [
+                f"По въезду на маршруте {origin_country} → {destination_country} нужен один базовый ответ.",
+                "Напишите, какое у вас гражданство и по какому документу планируете лететь.",
+                "Этого хватит, чтобы понять, можно ли въезжать сейчас и что ещё понадобится.",
+            ]
+        )
+        origin_country = route_locale.origin_country or "страны выезда"
+        destination_country = route_locale.destination_country or "страны назначения"
+        return "\n".join(
+            [
                 f"Уведомление по документам для маршрута {origin_country} → {destination_country}.",
                 "Для точной проверки въезда нужны данные путешественника.",
                 "Укажите гражданство, тип паспорта или ВНЖ, срок действия паспорта и важные дополнительные документы.",
