@@ -1,4 +1,4 @@
-from openrouter_client import OpenRouterConfig, build_trip_plan_payload
+from openrouter_client import OpenRouterConfig, _build_request_headers, build_trip_plan_payload
 from travel_planner import TravelPlanner
 
 
@@ -48,6 +48,39 @@ def test_build_trip_plan_payload_can_disable_web_search_plugin() -> None:
     )
 
     assert "plugins" not in payload
+
+
+def test_build_trip_plan_payload_does_not_send_plugins_to_gemini_or_groq() -> None:
+    gemini_payload = build_trip_plan_payload(
+        OpenRouterConfig(
+            api_key="test-key",
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            model="gemini-2.0-flash",
+            use_web_search=True,
+        ),
+        make_request("en"),
+    )
+    groq_payload = build_trip_plan_payload(
+        OpenRouterConfig(
+            api_key="test-key",
+            base_url="https://api.groq.com/openai/v1/chat/completions",
+            model="llama-3.3-70b-versatile",
+            use_web_search=True,
+        ),
+        make_request("en"),
+    )
+
+    assert "plugins" not in gemini_payload
+    assert "plugins" not in groq_payload
+
+
+def test_build_request_headers_include_standard_user_agent() -> None:
+    headers = _build_request_headers("test-key")
+
+    assert headers["Authorization"] == "Bearer test-key"
+    assert headers["Content-Type"] == "application/json"
+    assert headers["Accept"] == "application/json"
+    assert headers["User-Agent"] == "travel-telegram-bot/1.0"
 
 
 def test_build_trip_plan_payload_russian_prompt_mentions_real_named_places() -> None:

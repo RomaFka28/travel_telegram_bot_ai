@@ -77,6 +77,22 @@ def test_llm_travel_planner_async_uses_round_robin_primary_and_fallback() -> Non
     assert attempted == ["Groq", "Gemini"]
 
 
+def test_llm_travel_planner_budget_interpretation_uses_heuristic_only() -> None:
+    pool = LLMProviderPool(
+        [
+            LLMProvider("OpenRouter", 500, "openrouter-key", "https://openrouter.example", "openrouter-model"),
+        ]
+    )
+    planner = LLMTravelPlanner(pool)
+
+    with patch("llm_travel_planner.generate_trip_plan_with_provider") as llm_mock:
+        interpreted = planner.interpret_budget_text("Хотим уложиться до 50 000 на человека")
+
+    assert interpreted.display_text
+    assert interpreted.budget_class
+    llm_mock.assert_not_called()
+
+
 def test_llm_travel_planner_async_falls_back_to_heuristic_when_all_providers_fail() -> None:
     pool = LLMProviderPool(
         [

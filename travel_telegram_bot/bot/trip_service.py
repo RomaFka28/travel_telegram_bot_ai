@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from database import Database
-from travel_locale import build_entry_requirements_text, detect_route_locale
+from travel_locale import detect_route_locale
 from travel_links import build_links_text, build_structured_link_results, detect_link_needs
 from travel_result_models import TravelSearchResult, serialize_needs, serialize_results, trim_results
 from travelpayouts_flights import TravelpayoutsFlightProvider
@@ -169,6 +169,21 @@ class TripService:
             unique_questions.append(question)
         return "\n".join(f"• {question}" for question in unique_questions[:6])
 
+    def _build_entry_notice(self, request) -> str:
+        route_locale = detect_route_locale(request.destination, request.origin)
+        if not route_locale.is_international:
+            return ""
+        origin_country = route_locale.origin_country or "страны выезда"
+        destination_country = route_locale.destination_country or "страны назначения"
+        return "\n".join(
+            [
+                f"Уведомление по документам для маршрута {origin_country} → {destination_country}.",
+                "Для точной проверки въезда нужны данные путешественника.",
+                "Укажите гражданство, тип паспорта или ВНЖ, срок действия паспорта и важные дополнительные документы.",
+                "После этого можно точнее понять, нужны ли виза, страховка, обратный билет или другие подтверждения.",
+            ]
+        )
+
     def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
         notes = request.notes if notes_override is None else notes_override
         effective_request = self._planner.build_request_from_fields(
@@ -185,7 +200,7 @@ class TripService:
             language_code=getattr(request, "language_code", "ru"),
         )
         detected_needs, structured_results, tickets_text, links_text = self._collect_structured_results(effective_request)
-        entry_requirements_text = build_entry_requirements_text(effective_request.destination, effective_request.origin)
+        entry_requirements_text = self._build_entry_notice(effective_request)
         return {
             "title": effective_request.title,
             "destination": effective_request.destination,

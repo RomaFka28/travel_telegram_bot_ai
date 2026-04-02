@@ -211,6 +211,9 @@ class BotHandlers:
             reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
             disable_web_page_preview=True,
         )
+        entry_notice = self.formatter.build_entry_notice_text(trip_id)
+        if entry_notice:
+            await message.reply_text(entry_notice)
         return True
 
     async def _should_send_group_reply(
@@ -794,6 +797,9 @@ class BotHandlers:
             reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
             disable_web_page_preview=True,
         )
+        entry_notice = self.formatter.build_entry_notice_text(trip_id)
+        if entry_notice:
+            await update.effective_message.reply_text(entry_notice)
         await update.effective_message.reply_text(
             "Мастер завершён.",
             reply_markup=ReplyKeyboardRemove(),
@@ -974,6 +980,9 @@ class BotHandlers:
             reply_markup=trip_summary_keyboard(int(trip_id), self._chat_language(int(trip["chat_id"]))),
             disable_web_page_preview=True,
         )
+        entry_notice = self.formatter.build_entry_notice_text(int(trip_id))
+        if entry_notice:
+            await message.reply_text(entry_notice)
         self._log_trip_action(
             "edit_success",
             action="edit",

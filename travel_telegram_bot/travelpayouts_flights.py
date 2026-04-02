@@ -173,19 +173,18 @@ class TravelpayoutsFlightProvider:
             ]
 
         results: list[TravelSearchResult] = []
-        for offer in offers[:3]:
-            transfers = "\u043f\u0440\u044f\u043c\u043e\u0439" if offer.number_of_changes == 0 else f"{offer.number_of_changes} \u043f\u0435\u0440\u0435\u0441."
-            score = self._score_offer(offer.value, offer.number_of_changes, budget_text)
+        for label, offer in self._prioritize_offers(offers)[:3]:
+            transfers = "без пересадок" if offer.number_of_changes == 0 else f"{offer.number_of_changes} перес."
             results.append(
                 TravelSearchResult(
-                    title=f"{origin_match.name} -> {destination_match.name}",
+                    title=label,
                     price_text=f"{offer.value:,} \u20bd/\u0447\u0435\u043b.".replace(",", " "),
                     url=search_url,
                     source="Travelpayouts / Aviasales",
-                    score=score,
-                    budget_fit="",
+                    score=0,
+                    budget_fit=self._budget_fit_text(offer.value, budget_text),
                     dates=self._format_offer_dates(offer.depart_date, offer.return_date),
-                    note=f"{transfers}, \u043e\u0446\u0435\u043d\u043a\u0430 {score}/10",
+                    note=transfers,
                 )
             )
         return trim_results(results)
@@ -369,7 +368,40 @@ class TravelpayoutsFlightProvider:
                 )
             except (TypeError, ValueError):
                 continue
-        return [offer for offer in offers if offer.value > 0]
+        return sorted(
+            [offer for offer in offers if offer.value > 0],
+            key=lambda offer: (offer.value, offer.number_of_changes, offer.depart_date, offer.return_date),
+        )
+
+    @staticmethod
+    def _offer_identity(offer: FlightOffer) -> tuple[int, int, str, str]:
+        return (offer.value, offer.number_of_changes, offer.depart_date, offer.return_date)
+
+    def _prioritize_offers(self, offers: list[FlightOffer]) -> list[tuple[str, FlightOffer]]:
+        if not offers:
+            return []
+
+        prioritized: list[tuple[str, FlightOffer]] = []
+        seen: set[tuple[int, int, str, str]] = set()
+
+        cheapest = offers[0]
+        prioritized.append(("Самый дешевый", cheapest))
+        seen.add(self._offer_identity(cheapest))
+
+        direct_offer = next((offer for offer in offers if offer.number_of_changes == 0), None)
+        if direct_offer and self._offer_identity(direct_offer) not in seen:
+            prioritized.append(("Самый дешевый прямой", direct_offer))
+            seen.add(self._offer_identity(direct_offer))
+
+        for offer in offers:
+            identity = self._offer_identity(offer)
+            if identity in seen:
+                continue
+            prioritized.append(("Еще вариант", offer))
+            seen.add(identity)
+            if len(prioritized) >= 3:
+                break
+        return prioritized
 
     @staticmethod
     def _normalize_budget_level(budget_text: str) -> str:

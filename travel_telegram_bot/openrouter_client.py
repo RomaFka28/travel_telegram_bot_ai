@@ -24,6 +24,19 @@ class OpenRouterError(RuntimeError):
     pass
 
 
+def _supports_openrouter_web_search(config: OpenRouterConfig) -> bool:
+    return "openrouter.ai" in config.base_url.lower()
+
+
+def _build_request_headers(api_key: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "travel-telegram-bot/1.0",
+    }
+
+
 def _extract_json_object(text: str) -> dict:
     if not text:
         raise OpenRouterError("Empty LLM response.")
@@ -118,7 +131,7 @@ def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> d
         "max_tokens": 1400,
     }
 
-    if config.use_web_search:
+    if config.use_web_search and _supports_openrouter_web_search(config):
         payload["plugins"] = [
             {
                 "id": "web",
@@ -172,10 +185,7 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
         url=config.base_url,
         data=data,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {config.api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=_build_request_headers(config.api_key),
     )
 
     try:
@@ -239,10 +249,7 @@ def classify_budget_text(config: OpenRouterConfig, text: str) -> BudgetInterpret
         url=config.base_url,
         data=data,
         method="POST",
-        headers={
-            "Authorization": f"Bearer {config.api_key}",
-            "Content-Type": "application/json",
-        },
+        headers=_build_request_headers(config.api_key),
     )
 
     try:

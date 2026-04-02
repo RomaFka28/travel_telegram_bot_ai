@@ -1103,7 +1103,7 @@ class TravelPlanner:
             "RUB": "₽",
             "EUR": "€",
             "USD": "$",
-            "TRY": "TRY",
+            "TRY": "₺",
             "KZT": "KZT",
             "BYN": "BYN",
             "AMD": "AMD",

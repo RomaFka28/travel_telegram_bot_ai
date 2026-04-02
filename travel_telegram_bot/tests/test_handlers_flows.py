@@ -521,9 +521,8 @@ def test_summary_shows_full_multiday_itinerary(tmp_path) -> None:
     asyncio.run(handlers.summary_command(summary_update, DummyContext()))
 
     rendered = summary_message.replies[-1]["text"]
-    assert "День 1." in rendered
-    assert "День 2." in rendered
-    assert "День 3." in rendered
+    assert "День 1." not in rendered
+    assert "Открывается отдельной кнопкой ниже." in rendered
 
 
 def test_summary_hides_stale_links_and_context_for_invalid_destination(tmp_path) -> None:
@@ -693,6 +692,7 @@ def test_summary_shows_entry_requirements_for_international_trip(tmp_path) -> No
             "budget_breakdown_text": "",
             "budget_total_text": "нужна проверка цен в EUR",
             "entry_requirements_text": "Маршрут международный: Германия → Франция.",
+            "open_questions_text": "• Уточнить гражданство или тип паспорта, чтобы проверить визовые и въездные правила.",
             "status": "active",
         },
     )
@@ -702,9 +702,8 @@ def test_summary_shows_entry_requirements_for_international_trip(tmp_path) -> No
     asyncio.run(handlers.summary_command(summary_update, DummyContext()))
 
     rendered = summary_message.replies[-1]["text"]
-    assert "Въезд и документы" in rendered
-    assert "Германия" in rendered
-    assert "Франция" in rendered
+    assert "Въезд и документы" not in rendered
+    assert "тип паспорта" in rendered
 
 
 def test_travelpayouts_detects_one_way_text() -> None:
