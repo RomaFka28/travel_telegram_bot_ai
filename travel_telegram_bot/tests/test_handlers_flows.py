@@ -256,6 +256,37 @@ def test_plan_pending_message_in_private_chat_creates_trip(tmp_path) -> None:
     assert "Собрал новый план" in message.replies[0]["text"]
 
 
+def test_plan_pending_message_requests_missing_details_before_creating_trip(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    context = DummyContext()
+    context.chat_data["pending_plan_prompt"] = True
+
+    first_update, first_message = make_update(
+        text="Хочу в Стамбул 12 июня, нужен билет, бюджет бизнес, люблю прогулки и еду",
+        chat_id=1512,
+        chat_type="private",
+    )
+    asyncio.run(handlers.handle_trip_edit_input(first_update, context))
+
+    assert database.get_active_trip(1512) is None
+    assert "вылет" in first_message.replies[-1]["text"].lower()
+
+    second_update, second_message = make_update(text="Тбилиси", chat_id=1512, chat_type="private")
+    asyncio.run(handlers.handle_trip_edit_input(second_update, context))
+
+    assert database.get_active_trip(1512) is None
+    assert "в одну сторону" in second_message.replies[-1]["text"].lower()
+
+    third_update, third_message = make_update(text="в одну сторону", chat_id=1512, chat_type="private")
+    asyncio.run(handlers.handle_trip_edit_input(third_update, context))
+
+    trip = database.get_active_trip(1512)
+    assert trip is not None
+    assert trip["destination"] == "Стамбул"
+    assert "Собрал новый план" in third_message.replies[0]["text"]
+    assert "🧭" in third_message.replies[1]["text"]
+
+
 def test_plan_pending_message_in_group_chat_creates_trip(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     context = DummyContext()
@@ -295,6 +326,18 @@ def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
     assert "Предыдущий сохранён в истории" in second_message.replies[0]["text"]
     assert "Сочи" in second_message.replies[1]["text"]
     assert "Казань" in first_message.replies[1]["text"]
+
+
+def test_plan_command_populates_housing_results_without_explicit_housing_keywords(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    update, _ = make_update(chat_id=1513, chat_type="private")
+    context = DummyContext(args=["Хочу", "в", "Стамбул", "один,", "вылет", "из", "Тбилиси", "12", "июня,", "билет", "в", "одну", "сторону,", "бюджет", "Бизнес,", "интересуют", "прогулки", "и", "еда"])
+
+    asyncio.run(handlers.plan_command(update, context))
+
+    trip = database.get_active_trip(1513)
+    assert trip is not None
+    assert trip["housing_results"]
 
 
 def test_newtrip_flow_creates_trip(tmp_path) -> None:

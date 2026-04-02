@@ -151,6 +151,74 @@ class BotHandlers:
     def _build_plan_prompt_text(language_code: str = "ru") -> str:
         return tr(language_code, "plan_prompt")
 
+    @staticmethod
+    def _has_explicit_dates(text: str) -> bool:
+        lowered = (text or "").lower()
+        return bool(re.search(r"\b\d{1,2}[./-]\d{1,2}\b", lowered) or any(month in lowered for month in (
+            "январ", "феврал", "март", "апрел", "мая", "май", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"
+        )))
+
+    @staticmethod
+    def _has_explicit_origin(text: str) -> bool:
+        lowered = (text or "").lower()
+        triggers = ("вылет из", "лечу из", "старт из", "из ")
+        return any(trigger in lowered for trigger in triggers)
+
+    @staticmethod
+    def _has_explicit_route_type(text: str) -> bool:
+        lowered = (text or "").lower()
+        triggers = ("в одну сторону", "без обратного", "только туда", "туда-обратно", "обратно", "one way", "round trip")
+        return any(trigger in lowered for trigger in triggers)
+
+    @staticmethod
+    def _needs_route_followup(text: str) -> bool:
+        lowered = (text or "").lower()
+        triggers = ("вылет", "билет", "перелет", "перелёт", "рейс", "лететь", "one way", "round trip", "в одну сторону", "туда-обратно")
+        return any(trigger in lowered for trigger in triggers)
+
+    def _build_plan_followup_state(self, request, raw_text: str) -> dict[str, object] | None:
+        if not self._needs_route_followup(raw_text):
+            return None
+        fields: list[str] = []
+        if request.origin == "не указано" and not self._has_explicit_origin(raw_text):
+            fields.append("origin")
+        if request.dates_text == "не указаны" and not self._has_explicit_dates(raw_text):
+            fields.append("dates_text")
+        if not self._has_explicit_route_type(raw_text):
+            fields.append("route_type")
+        if not fields:
+            return None
+        return {
+            "title": request.title,
+            "destination": request.destination,
+            "origin": request.origin,
+            "dates_text": request.dates_text,
+            "days_count": request.days_count,
+            "group_size": request.group_size,
+            "budget_text": request.budget_text,
+            "interests_text": request.interests_text,
+            "notes": request.notes,
+            "source_prompt": request.source_prompt,
+            "language_code": request.language_code,
+            "fields": fields,
+            "index": 0,
+        }
+
+    def _plan_followup_question(self, field: str, language_code: str) -> str:
+        if language_code == "en":
+            mapping = {
+                "origin": "What city are you flying from?",
+                "dates_text": "What exact date or date range do you need?",
+                "route_type": "Do you need a one-way ticket or a round trip?",
+            }
+        else:
+            mapping = {
+                "origin": "Из какого города нужен вылет?",
+                "dates_text": "Какая точная дата или диапазон дат нужны?",
+                "route_type": "Нужен билет в одну сторону или туда-обратно?",
+            }
+        return mapping[field]
+
     async def _replace_or_remove_progress_message(
         self,
         progress_message,
@@ -178,7 +246,104 @@ class BotHandlers:
             logger.info("Could not delete progress message before sending final plan: %s", exc)
         return False
 
-    async def _create_trip_from_text(self, update: Update, raw_text: str) -> bool:
+    async def _finalize_trip_request(self, update: Update, request, *, notes_override: str = "") -> bool:
+        message = update.effective_message
+        chat = update.effective_chat
+        user = update.effective_user
+        if not message or not chat:
+            return False
+        replaced_trip = self.db.get_active_trip(chat.id) is not None
+        progress_message = None
+        if isinstance(self.planner, LLMTravelPlanner):
+            progress_message = await message.reply_text(
+                "Thinking over the trip with AI, this may take up to a minute..."
+                if self._chat_language(chat.id) == "en"
+                else "Думаю над поездкой с помощью ИИ, это может занять до минуты..."
+            )
+        await chat.send_action("typing")
+
+        if isinstance(self.planner, LLMTravelPlanner):
+            plan = await self.planner.generate_plan_async(request)
+        else:
+            plan = await asyncio.to_thread(self.planner.generate_plan, request)
+        payload = await asyncio.to_thread(
+            self.service._build_trip_payload,
+            request,
+            plan,
+            notes_override=notes_override,
+        )
+        trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
+        self.db.set_selected_trip(chat.id, trip_id)
+        await self.service._refresh_weather_for_trip(trip_id)
+
+        summary_text = self.formatter._build_summary_html(trip_id)
+        summary_keyboard = trip_summary_keyboard(trip_id, self._chat_language(chat.id))
+        replaced_status_message = await self._replace_or_remove_progress_message(
+            progress_message,
+            summary_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=summary_keyboard,
+            disable_web_page_preview=True,
+        )
+        if not replaced_status_message:
+            await message.reply_text(
+                self.formatter.build_trip_created_text(
+                    replaced_trip=replaced_trip,
+                    chat_type=getattr(chat, "type", None),
+                    language_code=self._chat_language(chat.id),
+                )
+            )
+            await message.reply_text(
+                summary_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=summary_keyboard,
+                disable_web_page_preview=True,
+            )
+        entry_notice = self.formatter.build_entry_notice_text(trip_id)
+        if entry_notice:
+            await message.reply_text(entry_notice)
+        return True
+
+    async def _continue_plan_followup(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+        state = context.chat_data.get("plan_followup")
+        message = update.effective_message
+        if not state or not message:
+            return False
+
+        field = state["fields"][state["index"]]
+        answer = (message.text or "").strip()
+        if not answer:
+            await message.reply_text(self._plan_followup_question(field, state["language_code"]))
+            return True
+
+        if field == "route_type":
+            state["notes"] = f"{state.get('notes', '').strip()}\n{answer}".strip()
+            state["source_prompt"] = f"{state.get('source_prompt', '').strip()}\n{answer}".strip()
+        else:
+            state[field] = answer
+
+        state["index"] += 1
+        if state["index"] < len(state["fields"]):
+            await message.reply_text(self._plan_followup_question(state["fields"][state["index"]], state["language_code"]))
+            return True
+
+        context.chat_data.pop("plan_followup", None)
+        request = self.planner.build_request_from_fields(
+            title=str(state["title"]),
+            destination=str(state["destination"]),
+            origin=str(state["origin"]),
+            dates_text=str(state["dates_text"]),
+            days_count=int(state["days_count"]),
+            group_size=int(state["group_size"]),
+            budget_text=str(state["budget_text"]),
+            interests_text=str(state["interests_text"]),
+            notes=str(state["notes"]),
+            source_prompt=str(state["source_prompt"]),
+            language_code=str(state["language_code"]),
+        )
+        return await self._finalize_trip_request(update, request, notes_override=str(state["notes"]))
+
+    async def _create_trip_from_text(self, update: Update, raw_text: str, context: ContextTypes.DEFAULT_TYPE | None = None) -> bool:
         message = update.effective_message
         if not message:
             return False
@@ -198,6 +363,12 @@ class BotHandlers:
             return False
 
         request.notes = ""
+        followup_state = self._build_plan_followup_state(request, text)
+        if followup_state and context is not None:
+            context.chat_data["plan_followup"] = followup_state
+            await message.reply_text(self._plan_followup_question(followup_state["fields"][0], followup_state["language_code"]))
+            return True
+        return await self._finalize_trip_request(update, request)
         chat = update.effective_chat
         user = update.effective_user
         if not chat:
@@ -673,7 +844,7 @@ class BotHandlers:
 
         raw_text = " ".join(context.args).strip()
         context.chat_data.pop("pending_plan_prompt", None)
-        await self._create_trip_from_text(update, raw_text)
+        await self._create_trip_from_text(update, raw_text, context)
 
     async def new_trip_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         context.user_data["trip_draft"] = {}
@@ -960,9 +1131,11 @@ class BotHandlers:
         )
 
     async def handle_trip_edit_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if await self._continue_plan_followup(update, context):
+            return
         pending_plan = context.chat_data.pop("pending_plan_prompt", False)
         if pending_plan:
-            await self._create_trip_from_text(update, update.effective_message.text if update.effective_message else "")
+            await self._create_trip_from_text(update, update.effective_message.text if update.effective_message else "", context)
             return
 
         trip_id = context.user_data.pop("edit_trip_id", None)
@@ -1036,9 +1209,11 @@ class BotHandlers:
         if not message or not chat:
             return
         self._remember_chat_member(update)
+        if await self._continue_plan_followup(update, context):
+            return
         pending_plan = context.chat_data.pop("pending_plan_prompt", False)
         if pending_plan:
-            await self._create_trip_from_text(update, message.text or "")
+            await self._create_trip_from_text(update, message.text or "", context)
             return
         settings = self.db.get_or_create_settings(chat.id)
         if not self._bool_from_db(settings.get("autodraft_enabled")):
