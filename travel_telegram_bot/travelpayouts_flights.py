@@ -33,6 +33,7 @@ class FlightOffer:
     value: int
     number_of_changes: int
     actual: bool
+    trip_class: int = 0
 
 
 class TravelpayoutsFlightProvider:
@@ -140,6 +141,7 @@ class TravelpayoutsFlightProvider:
             destination_match = self._resolve_place(normalized_destination)
             date_range = _parse_dates_range(dates_text)
             one_way = self._is_one_way(source_text, dates_text)
+            trip_class = self._budget_trip_class(budget_text)
             if date_range:
                 offers = self._search_prices_for_dates(
                     origin_code=origin_match.code,
@@ -147,6 +149,7 @@ class TravelpayoutsFlightProvider:
                     start_date=date_range[0].isoformat(),
                     end_date=date_range[1].isoformat(),
                     one_way=one_way,
+                    trip_class=trip_class,
                 )
                 direct_offers = self._search_prices_for_dates(
                     origin_code=origin_match.code,
@@ -155,6 +158,7 @@ class TravelpayoutsFlightProvider:
                     end_date=date_range[1].isoformat(),
                     one_way=one_way,
                     direct_only=True,
+                    trip_class=trip_class,
                 )
             else:
                 offers = self._search_latest_prices(
@@ -162,6 +166,7 @@ class TravelpayoutsFlightProvider:
                     destination_code=destination_match.code,
                     dates_text=dates_text,
                     one_way=one_way,
+                    trip_class=trip_class,
                 )
                 direct_offers = self._search_latest_prices(
                     origin_code=origin_match.code,
@@ -169,6 +174,7 @@ class TravelpayoutsFlightProvider:
                     dates_text=dates_text,
                     one_way=one_way,
                     direct_only=True,
+                    trip_class=trip_class,
                 )
             offers = self._merge_offers(offers, direct_offers)
             search_url = self._build_search_url(
@@ -178,6 +184,7 @@ class TravelpayoutsFlightProvider:
                 end_date=date_range[1].isoformat() if date_range and not one_way else None,
                 one_way=one_way,
                 adults=group_size,
+                trip_class=trip_class,
             )
         except TravelpayoutsError as exc:
             return [
@@ -192,6 +199,7 @@ class TravelpayoutsFlightProvider:
 
         results: list[TravelSearchResult] = []
         for label, offer in self._prioritize_offers(offers)[:4]:
+            cabin_label = self._trip_class_label(offer.trip_class)
             transfers = "без пересадок" if offer.number_of_changes == 0 else f"{offer.number_of_changes} перес."
             results.append(
                 TravelSearchResult(
@@ -202,7 +210,7 @@ class TravelpayoutsFlightProvider:
                     score=0,
                     budget_fit=self._budget_fit_text(offer.value, budget_text),
                     dates=self._format_offer_dates(offer.depart_date, offer.return_date),
-                    note=transfers,
+                    note=transfers if not cabin_label else f"{cabin_label}, {transfers}",
                 )
             )
         return trim_results(results, limit=4)
@@ -216,31 +224,24 @@ class TravelpayoutsFlightProvider:
         end_date: str | None,
         one_way: bool = False,
         adults: int = 1,
+        trip_class: int = 0,
     ) -> str:
         route_origin = origin_code.strip().upper()
         route_destination = destination_code.strip().upper()
         passengers = max(1, min(int(adults or 1), 9))
-        if one_way and start_date:
-            base_url = (
-                "https://www.aviasales.ru/search/"
-                f"{route_origin}{start_date[8:10]}{start_date[5:7]}"
-                f"{route_destination}{passengers}"
-            )
-        elif one_way:
-            query_params = {"origin_iata": route_origin, "destination_iata": route_destination}
-            if start_date:
-                query_params["depart_date"] = start_date
-            base_url = "https://www.aviasales.ru/?" + urllib.parse.urlencode(query_params)
-        elif start_date and end_date:
-            base_url = (
-                "https://www.aviasales.ru/search/"
-                f"{route_origin}{start_date[8:10]}{start_date[5:7]}"
-                f"{route_destination}{end_date[8:10]}{end_date[5:7]}{passengers}"
-            )
-        else:
-            base_url = "https://www.aviasales.ru/?" + urllib.parse.urlencode(
-                {"origin_iata": route_origin, "destination_iata": route_destination}
-            )
+        query_params: dict[str, str | int] = {
+            "origin_iata": route_origin,
+            "destination_iata": route_destination,
+            "adults": passengers,
+            "trip_class": max(0, min(int(trip_class or 0), 2)),
+        }
+        if start_date:
+            query_params["depart_date"] = start_date
+        if end_date and not one_way:
+            query_params["return_date"] = end_date
+        if one_way:
+            query_params["one_way"] = 1
+        base_url = "https://www.aviasales.ru/search?" + urllib.parse.urlencode(query_params)
         if self._partner_links and self._partner_links.enabled:
             try:
                 return self._partner_links.convert(base_url, sub_id=f"{route_origin}-{route_destination}")
@@ -320,7 +321,20 @@ class TravelpayoutsFlightProvider:
         end_date: str,
         one_way: bool = False,
         direct_only: bool = False,
+        trip_class: int = 0,
     ) -> list[FlightOffer]:
+        if trip_class > 0:
+            trip_duration = None if one_way else max(1, (datetime.fromisoformat(end_date) - datetime.fromisoformat(start_date)).days)
+            return self._search_latest_prices(
+                origin_code=origin_code,
+                destination_code=destination_code,
+                dates_text=start_date,
+                one_way=one_way,
+                direct_only=direct_only,
+                trip_class=trip_class,
+                exact_depart_date=start_date,
+                trip_duration=trip_duration,
+            )
         params = [
             ("origin", origin_code),
             ("destination", destination_code),
@@ -349,6 +363,9 @@ class TravelpayoutsFlightProvider:
         dates_text: str,
         one_way: bool = False,
         direct_only: bool = False,
+        trip_class: int = 0,
+        exact_depart_date: str | None = None,
+        trip_duration: int | None = None,
     ) -> list[FlightOffer]:
         params: list[tuple[str, str]] = [
             ("origin", origin_code),
@@ -360,10 +377,20 @@ class TravelpayoutsFlightProvider:
             ("direct", "true" if direct_only else "false"),
             ("one_way", "true" if one_way else "false"),
             ("market", "ru"),
+            ("trip_class", str(max(0, min(int(trip_class or 0), 2)))),
             ("token", self._api_key),
         ]
         date_range = _parse_dates_range(dates_text)
-        if date_range:
+        if exact_depart_date:
+            params.extend(
+                [
+                    ("period_type", "day"),
+                    ("beginning_of_period", exact_depart_date),
+                ]
+            )
+            if not one_way and trip_duration:
+                params.append(("trip_duration", str(max(1, trip_duration))))
+        elif date_range:
             start, end = date_range
             params.extend(
                 [
@@ -393,6 +420,7 @@ class TravelpayoutsFlightProvider:
                         value=int(float(item.get("price") or item.get("value") or 0)),
                         number_of_changes=int(item.get("transfers") or item.get("number_of_changes") or 0),
                         actual=bool(item.get("actual", True)),
+                        trip_class=int(item.get("trip_class") or 0),
                     )
                 )
             except (TypeError, ValueError):
@@ -404,7 +432,7 @@ class TravelpayoutsFlightProvider:
 
     def _merge_offers(self, *offer_groups: list[FlightOffer]) -> list[FlightOffer]:
         merged: list[FlightOffer] = []
-        seen: set[tuple[int, int, str, str]] = set()
+        seen: set[tuple[int, int, str, str, int]] = set()
         for offers in offer_groups:
             for offer in offers:
                 identity = self._offer_identity(offer)
@@ -418,15 +446,15 @@ class TravelpayoutsFlightProvider:
         )
 
     @staticmethod
-    def _offer_identity(offer: FlightOffer) -> tuple[int, int, str, str]:
-        return (offer.value, offer.number_of_changes, offer.depart_date, offer.return_date)
+    def _offer_identity(offer: FlightOffer) -> tuple[int, int, str, str, int]:
+        return (offer.value, offer.number_of_changes, offer.depart_date, offer.return_date, offer.trip_class)
 
     def _prioritize_offers(self, offers: list[FlightOffer]) -> list[tuple[str, FlightOffer]]:
         if not offers:
             return []
 
         prioritized: list[tuple[str, FlightOffer]] = []
-        seen: set[tuple[int, int, str, str]] = set()
+        seen: set[tuple[int, int, str, str, int]] = set()
 
         cheapest = offers[0]
         prioritized.append(("Самый дешевый", cheapest))
@@ -466,6 +494,18 @@ class TravelpayoutsFlightProvider:
                 return "первый класс"
             return "бизнес"
         return "бизнес"
+
+    @classmethod
+    def _budget_trip_class(cls, budget_text: str) -> int:
+        level = cls._normalize_budget_level(budget_text)
+        return {"эконом": 0, "бизнес": 1, "первый класс": 2}.get(level, 0)
+
+    @staticmethod
+    def _trip_class_label(trip_class: int) -> str:
+        return {
+            1: "бизнес-класс",
+            2: "первый класс",
+        }.get(int(trip_class or 0), "")
 
     @classmethod
     def _budget_fit_text(cls, price_per_person: int, budget_text: str) -> str:

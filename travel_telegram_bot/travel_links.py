@@ -176,6 +176,15 @@ def _currency_for_destination(destination: str) -> str:
     return "LOCAL"
 
 
+def _normalize_budget_level(budget_text: str) -> str:
+    lowered = (budget_text or "").lower()
+    if any(phrase in lowered for phrase in ("первый класс", "first class", "не ограничен", "без ограничений", "люкс", "премиум")):
+        return "первый класс"
+    if any(phrase in lowered for phrase in ("бизнес", "business", "комфорт", "хороший отель")):
+        return "бизнес"
+    return "эконом"
+
+
 def _ticket_links(destination: str, origin: str | None, start_date: str | None, end_date: str | None) -> list[tuple[str, str]]:
     normalized_destination = normalized_search_value(destination)
     normalized_origin = normalized_search_value(origin)
@@ -199,10 +208,17 @@ def _ticket_links(destination: str, origin: str | None, start_date: str | None, 
     return [("✈️ Aviasales", url)]
 
 
-def _housing_links(destination: str, start_date: str | None, end_date: str | None, group_size: int = 2) -> list[tuple[str, str]]:
+def _housing_links(
+    destination: str,
+    start_date: str | None,
+    end_date: str | None,
+    group_size: int = 2,
+    budget_text: str = "",
+) -> list[tuple[str, str]]:
     normalized_destination = normalized_search_value(destination)
     if not normalized_destination:
         return []
+    budget_level = _normalize_budget_level(budget_text)
 
     encoded_destination = urllib.parse.quote_plus(normalized_destination)
     if _is_ru_cis_destination(normalized_destination):
@@ -243,20 +259,46 @@ def _housing_links(destination: str, start_date: str | None, end_date: str | Non
         yandex_base = f"https://travel.yandex.ru/hotels/{yandex_path or _transliterate_slug(normalized_destination)}/"
         yandex_url = yandex_base + "?" + urllib.parse.urlencode(yandex_params)
 
+        if budget_level == "первый класс":
+            return [
+                ("🧳 Яндекс Путешествия", yandex_url),
+                ("🏨 Островок", ostrovok_url),
+                ("🏠 Суточно", sutochno_url),
+            ]
+        if budget_level == "бизнес":
+            return [
+                ("🏨 Островок", ostrovok_url),
+                ("🧳 Яндекс Путешествия", yandex_url),
+                ("🏠 Суточно", sutochno_url),
+            ]
         return [
             ("🏨 Островок", ostrovok_url),
             ("🏠 Суточно", sutochno_url),
             ("🧳 Яндекс Путешествия", yandex_url),
         ]
 
-    booking_params = {"ss": normalized_destination}
+    search_hint = normalized_destination
+    if budget_level == "первый класс":
+        search_hint = f"{normalized_destination} luxury hotel"
+    elif budget_level == "бизнес":
+        search_hint = f"{normalized_destination} boutique hotel"
+    elif group_size >= 4:
+        search_hint = f"{normalized_destination} apartment"
+
+    booking_params = {"ss": search_hint}
     if start_date:
         booking_params["checkin"] = start_date
     if end_date:
         booking_params["checkout"] = end_date
     booking_url = "https://www.booking.com/searchresults.html?" + urllib.parse.urlencode(booking_params)
-    agoda_url = "https://www.agoda.com/search?" + urllib.parse.urlencode({"city": normalized_destination})
-    tripadvisor_url = "https://www.tripadvisor.com/Search?" + urllib.parse.urlencode({"q": f"hotels {normalized_destination}"})
+    agoda_url = "https://www.agoda.com/search?" + urllib.parse.urlencode({"city": search_hint})
+    tripadvisor_url = "https://www.tripadvisor.com/Search?" + urllib.parse.urlencode({"q": f"hotels {search_hint}"})
+    if budget_level == "эконом":
+        return [
+            ("🛎 Agoda", agoda_url),
+            ("🏨 Booking.com", booking_url),
+            ("🧭 Tripadvisor Hotels", tripadvisor_url),
+        ]
     return [
         ("🏨 Booking.com", booking_url),
         ("🛎 Agoda", agoda_url),
@@ -347,7 +389,7 @@ def _transfer_links(destination: str) -> list[tuple[str, str]]:
 def _estimate_housing_result(destination: str, source: str, group_size: int, budget_text: str, context_text: str) -> tuple[str, str, int]:
     currency = _currency_for_destination(destination)
     lowered_context = (context_text or "").lower()
-    lowered_budget = (budget_text or "").lower()
+    budget_level = _normalize_budget_level(budget_text)
 
     if any(keyword in lowered_context for keyword in ("пентхаус", "вилла", "люкс")):
         style = "пентхаус / вилла"
@@ -362,13 +404,20 @@ def _estimate_housing_result(destination: str, source: str, group_size: int, bud
     else:
         style = "отель / студия"
 
+    if budget_level == "первый класс" and style == "отель / студия":
+        style = "премиальный отель / люкс"
+    elif budget_level == "бизнес" and style == "отель / студия":
+        style = "комфортный отель / апартаменты"
+    elif budget_level == "эконом" and style == "отель / студия":
+        style = "базовый отель / студия"
+
     if currency == "RUB":
         base = 4900 if source == "🏨 Островок" else 5300 if source == "🏠 Суточно" else 5100
-        if any(token in lowered_budget for token in ("эконом", "до ", "подешевле", "недорого")):
+        if budget_level == "эконом":
             base -= 900
-        elif any(token in lowered_budget for token in ("первый класс", "не ограничен", "люкс", "премиум")):
+        elif budget_level == "первый класс":
             base += 3400
-        elif any(token in lowered_budget for token in ("бизнес", "комфорт", "средн")):
+        elif budget_level == "бизнес":
             base += 1200
         if "пентхаус" in style or "вилла" in style:
             base += 5000
@@ -377,13 +426,24 @@ def _estimate_housing_result(destination: str, source: str, group_size: int, bud
         elif "хостел" in style:
             base -= 1400
         score = 9 if source in {"🏨 Островок", "🏠 Суточно"} else 8
+        if budget_level == "первый класс" and source == "🧳 Яндекс Путешествия":
+            score = 10
         return f"от {base:,} ₽/ночь".replace(",", " "), style, score
 
     if currency == "EUR":
         base = 82 if source == "🛎 Agoda" else 95
+        if budget_level == "бизнес":
+            base += 55
+        elif budget_level == "первый класс":
+            base += 160
         return f"from {base} EUR/night", style, 8
     if currency == "TRY":
-        return "from 3 200 TRY/night", style, 8
+        base = 3200
+        if budget_level == "бизнес":
+            base = 6200
+        elif budget_level == "первый класс":
+            base = 11800
+        return f"from {base:,} TRY/night".replace(",", " "), style, 8
     return "открыть варианты по ссылке", style, 8
 
 
@@ -394,6 +454,7 @@ def build_links_map(
     *,
     group_size: int = 2,
     context_text: str = "",
+    budget_text: str = "",
 ) -> dict[str, list[tuple[str, str]]]:
     normalized_destination = normalized_search_value(destination)
     if not normalized_destination:
@@ -410,7 +471,7 @@ def build_links_map(
         if ticket_links:
             links["tickets"] = ticket_links
     if "housing" in needs:
-        housing_links = _housing_links(normalized_destination, start_date, end_date, group_size)
+        housing_links = _housing_links(normalized_destination, start_date, end_date, group_size, budget_text)
         if housing_links:
             links["housing"] = housing_links
     if "excursions" in needs:
@@ -484,7 +545,14 @@ def build_structured_link_results(
                     )
                 )
 
-    return {key: trim_results(value) for key, value in results.items() if value}
+    normalized_results: dict[str, list[TravelSearchResult]] = {}
+    for key, value in results.items():
+        if not value:
+            continue
+        if key == "housing":
+            value = sorted(value, key=lambda item: (-item.score, item.title))
+        normalized_results[key] = trim_results(value)
+    return normalized_results
 
 
 def build_links_text(

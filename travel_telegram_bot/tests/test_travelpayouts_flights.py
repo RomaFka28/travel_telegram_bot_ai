@@ -13,7 +13,10 @@ def test_build_search_url_for_one_way_uses_search_route() -> None:
         adults=1,
     )
 
-    assert url == "https://www.aviasales.ru/search/TBS1206IST1"
+    assert url == (
+        "https://www.aviasales.ru/search?"
+        "origin_iata=TBS&destination_iata=IST&adults=1&trip_class=0&depart_date=2026-06-12&one_way=1"
+    )
 
 
 def test_build_search_url_for_round_trip_keeps_passenger_count() -> None:
@@ -28,7 +31,51 @@ def test_build_search_url_for_round_trip_keeps_passenger_count() -> None:
         adults=2,
     )
 
-    assert url == "https://www.aviasales.ru/search/TBS1206IST18062"
+    assert url == (
+        "https://www.aviasales.ru/search?"
+        "origin_iata=TBS&destination_iata=IST&adults=2&trip_class=0&depart_date=2026-06-12&return_date=2026-06-18"
+    )
+
+
+def test_build_search_url_includes_trip_class_for_premium_budget() -> None:
+    provider = TravelpayoutsFlightProvider(api_key="test-key")
+
+    url = provider._build_search_url(
+        origin_code="TBS",
+        destination_code="IST",
+        start_date="2026-06-12",
+        end_date=None,
+        one_way=True,
+        adults=1,
+        trip_class=1,
+    )
+
+    assert "trip_class=1" in url
+
+
+def test_search_prices_for_dates_uses_latest_prices_for_premium_cabin(monkeypatch) -> None:
+    provider = TravelpayoutsFlightProvider(api_key="test-key")
+    captured: dict[str, str] = {}
+
+    def fake_get_json(url: str):
+        captured["url"] = url
+        return {"data": []}
+
+    monkeypatch.setattr(provider, "_get_json", fake_get_json)
+
+    offers = provider._search_prices_for_dates(
+        origin_code="TBS",
+        destination_code="IST",
+        start_date="2026-06-12",
+        end_date="2026-06-18",
+        one_way=False,
+        trip_class=1,
+    )
+
+    assert offers == []
+    assert "get_latest_prices" in captured["url"]
+    assert "trip_class=1" in captured["url"]
+    assert "period_type=day" in captured["url"]
 
 
 def test_prioritize_offers_keeps_cheapest_direct_and_extra_variants() -> None:

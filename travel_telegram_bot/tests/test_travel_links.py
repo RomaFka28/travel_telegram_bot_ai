@@ -1,68 +1,33 @@
-from types import SimpleNamespace
-
-import travel_links
-from travel_links import build_links_map, build_links_text
+from travel_links import _estimate_housing_result, _housing_links, build_structured_link_results
 
 
-def test_build_links_text_includes_russian_sources() -> None:
-    links = build_links_text(
-        "Казань",
-        "12-14 июня",
-        "Томск",
-        context_text="нужны билеты, отель и экскурсии, потом может поезд",
+def test_housing_links_use_budget_profile_for_international_destination() -> None:
+    premium_links = _housing_links("Париж", "2026-06-12", "2026-06-15", 1, "первый класс")
+    economy_links = _housing_links("Париж", "2026-06-12", "2026-06-15", 1, "эконом")
+
+    assert premium_links[0][0] == "🏨 Booking.com"
+    assert "luxury+hotel" in premium_links[0][1]
+    assert economy_links[0][0] == "🛎 Agoda"
+
+
+def test_estimate_housing_result_raises_price_for_premium_budget() -> None:
+    economy_price, economy_style, _ = _estimate_housing_result("Париж", "🏨 Booking.com", 1, "эконом", "")
+    premium_price, premium_style, _ = _estimate_housing_result("Париж", "🏨 Booking.com", 1, "первый класс", "")
+
+    assert economy_price == "from 95 EUR/night"
+    assert "премиальный" in premium_style
+    assert premium_price != economy_price
+
+
+def test_build_structured_link_results_prioritizes_premium_housing() -> None:
+    structured = build_structured_link_results(
+        "Стамбул",
+        "12 июня",
+        "Тбилиси",
+        group_size=1,
+        context_text="жилье отель",
+        budget_text="первый класс",
     )
 
-    lowered = links.lower()
-    assert "aviasales" in lowered
-    assert "tutu" in lowered
-    assert "ostrovok" in lowered
-    assert "sutochno" in lowered
-    assert "tripster" in lowered
-
-
-def test_build_links_text_only_shows_relevant_categories_from_chat() -> None:
-    links = build_links_text(
-        "Сочи",
-        "12-14 июня",
-        "Томск",
-        context_text="может взять машину в аренду и сходить на экскурсию",
-    )
-
-    lowered = links.lower()
-    assert "tripster" in lowered
-    assert "аренда+авто" in lowered
-    assert "ostrovok" not in lowered
-    assert "tutu" not in lowered
-
-
-def test_build_links_map_skips_placeholder_destination() -> None:
-    links = build_links_map(
-        "-",
-        "12-14 июня",
-        "Томск",
-        context_text="нужно жильё и билеты",
-    )
-
-    assert links == {}
-
-
-def test_build_links_text_switches_to_international_sources(monkeypatch) -> None:
-    monkeypatch.setattr(
-        travel_links,
-        "detect_route_locale",
-        lambda destination, origin=None: SimpleNamespace(is_ru_cis_destination=False),
-    )
-
-    links = build_links_text(
-        "Paris",
-        "12-14 июня",
-        "Berlin",
-        context_text="нужны отель, экскурсии, дорога и аренда машины",
-    )
-
-    lowered = links.lower()
-    assert "booking.com" in lowered
-    assert "getyourguide" in lowered
-    assert "rome2rio" in lowered
-    assert "rentalcars" in lowered
-    assert "ostrovok" not in lowered
+    assert structured["housing"]
+    assert "Яндекс Путешествия" in structured["housing"][0].source or "Booking.com" in structured["housing"][0].source
