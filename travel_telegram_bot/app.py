@@ -68,6 +68,10 @@ def build_application():
 
     database = Database(settings.database_dsn)
     database.init_db()
+    logging.getLogger(__name__).info(
+        "Database backend ready: database_backend=%s",
+        "postgres" if database.is_postgres else "sqlite",
+    )
     planner: TravelPlanner
     providers = build_provider_list(
         openrouter_api_key=settings.openrouter_api_key,
