@@ -455,48 +455,27 @@ class TripFormatter:
         if not trip:
             return tr("ru", "trip_not_found")
         lang = self._trip_language(trip)
-
+        has_destination = self._has_destination(trip)
+        
+        header = self._render_summary_header(trip, lang, has_destination)
+        readiness = self._render_readiness(trip, trip_id, lang)
+        quick_view = self._render_quick_view(trip, trip_id, lang, has_destination)
+        details = self._render_details(trip, lang, has_destination)
+        participants = self._render_participants(trip_id, lang)
+        notes_section = self._render_notes_and_questions(trip, lang)
+        structured = self._render_structured_results(trip, lang, has_destination)
+        
+        return header + "\n" + readiness + quick_view + details + participants + notes_section + structured
+    
+    def _render_summary_header(self, trip: dict, lang: str, has_destination: bool) -> str:
+        """Рендерит шапку summary: заголовок + основные поля."""
         destination = normalized_search_value(trip["destination"]) or tr(lang, "unknown_destination")
         origin = normalized_search_value(trip["origin"]) or tr(lang, "settings_none")
         dates_text = normalized_search_value(trip["dates_text"]) or tr(lang, "status_unknown_dates")
         budget_text = normalized_search_value(trip["budget_text"]) or tr(lang, "settings_none")
         budget_class = self._budget_class_label(budget_text, lang)
         interests_text = normalized_search_value(trip["interests_text"]) or tr(lang, "settings_none")
-        has_destination = self._has_destination(trip)
-        stay_preview = self._escape_block(
-            self._preview_multiline(trip["stay_text"] or "", max_blocks=1)
-            if has_destination
-            else tr(lang, "group_wait_destination")
-        )
-        context_preview = self._escape_block(
-            self._preview_multiline(trip["context_text"] or "", max_blocks=1)
-            if has_destination
-            else tr(lang, "summary_short_no_destination")
-        )
-        notes_text = self._escape_block(trip["notes"] or "—")
-        weather_text = (trip["weather_text"] or "").strip()
-        weather_block = f"\n\n<b>{tr(lang, 'summary_weather')}</b>\n{html.escape(weather_text)}" if weather_text else ""
-        sections = [
-            self._category_section(trip, "flight_results"),
-            self._category_section(trip, "housing_results"),
-            self._category_section(trip, "activity_results"),
-            self._category_section(trip, "transport_results"),
-            self._category_section(trip, "rental_results"),
-        ]
-        structured_block = "\n\n".join(section for section in sections if section) if has_destination else ""
-        links_text = (trip.get("links_text") or "").strip()
-        links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text and not structured_block and has_destination else ""
-        summary_short = (trip.get("summary_short_text") or "").strip()
-        short_summary_text = (
-            summary_short
-            if summary_short and has_destination
-            else tr(lang, "summary_short_no_destination")
-        )
-        short_block = f"\n\n<b>{tr(lang, 'summary_quick')}</b>\n{html.escape(short_summary_text)}"
-        open_questions = (trip.get("open_questions_text") or "").strip()
-        open_questions_block = f"\n\n<b>{tr(lang, 'summary_open_questions')}</b>\n{html.escape(open_questions)}" if open_questions else ""
-        readiness_text, checklist_text = self._planning_readiness(trip, trip_id)
-
+        
         return (
             f"<b>🧭 {html.escape(trip['title'])}</b>\n"
             f"{tr(lang, 'summary_destination')}: <b>{html.escape(destination)}</b>\n"
@@ -507,23 +486,91 @@ class TripFormatter:
             f"{tr(lang, 'summary_trip_class')}: <b>{html.escape(budget_class)}</b>\n"
             f"{tr(lang, 'summary_interests')}: <b>{html.escape(interests_text)}</b>"
             + self._detected_needs_line(trip)
-            + "\n"
-            + f"\n{readiness_text}\n{html.escape(checklist_text)}"
-            + short_block
+        )
+    
+    def _render_readiness(self, trip: dict, trip_id: int, lang: str) -> str:
+        """Рендерит блок готовности плана."""
+        readiness_text, checklist_text = self._planning_readiness(trip, trip_id)
+        return f"\n{readiness_text}\n{html.escape(checklist_text)}"
+    
+    def _render_quick_view(self, trip: dict, trip_id: int, lang: str, has_destination: bool) -> str:
+        """Рендерит блок быстрого просмотра."""
+        summary_short = (trip.get("summary_short_text") or "").strip()
+        short_summary_text = (
+            summary_short
+            if summary_short and has_destination
+            else tr(lang, "summary_short_no_destination")
+        )
+        short_block = f"\n\n<b>{tr(lang, 'summary_quick')}</b>\n{html.escape(short_summary_text)}"
+        
+        context_preview = self._escape_block(
+            self._preview_multiline(trip["context_text"] or "", max_blocks=1)
+            if has_destination
+            else tr(lang, "summary_short_no_destination")
+        )
+        stay_preview = self._escape_block(
+            self._preview_multiline(trip["stay_text"] or "", max_blocks=1)
+            if has_destination
+            else tr(lang, "group_wait_destination")
+        )
+        budget_total = html.escape(trip['budget_total_text'] or tr(lang, 'summary_budget_total_empty'))
+        
+        return (
+            short_block
             + "\n\n"
-            f"<b>{tr(lang, 'summary_context')}</b>\n{context_preview}\n\n"
-            f"<b>{tr(lang, 'summary_route')}</b>\n{tr(lang, 'summary_route_button_note')}\n\n"
-            f"<b>{tr(lang, 'summary_stay')}</b>\n{stay_preview}\n\n"
-            f"<b>{tr(lang, 'summary_budget_total')}</b>\n{html.escape(trip['budget_total_text'] or tr(lang, 'summary_budget_total_empty'))}\n\n"
-            f"<b>{tr(lang, 'summary_participants')}</b>\n"
+            + f"<b>{tr(lang, 'summary_context')}</b>\n{context_preview}\n\n"
+            + f"<b>{tr(lang, 'summary_route')}</b>\n{tr(lang, 'summary_route_button_note')}\n\n"
+            + f"<b>{tr(lang, 'summary_stay')}</b>\n{stay_preview}\n\n"
+            + f"<b>{tr(lang, 'summary_budget_total')}</b>\n{budget_total}"
+        )
+    
+    def _render_details(self, trip: dict, lang: str, has_destination: bool) -> str:
+        """Рендерит участников и варианты дат."""
+        trip_id = int(trip["id"])
+        return (
+            "\n\n"
+            + f"<b>{tr(lang, 'summary_participants')}</b>\n"
             + "\n".join(self._participant_lines(trip_id))
             + "\n\n"
             + f"<b>{tr(lang, 'summary_date_options')}</b>\n"
             + "\n".join(self._date_lines(trip_id))
-            + "\n\n"
-            + f"<b>{tr(lang, 'summary_notes')}</b>\n{notes_text}"
-            + open_questions_block
-            + (f"\n\n{structured_block}" if structured_block else "")
+        )
+    
+    def _render_participants(self, trip_id: int, lang: str) -> str:
+        """Рендерит блок участников (для совместимости)."""
+        # Участники уже включены в _render_details
+        return ""
+    
+    def _render_notes_and_questions(self, trip: dict, lang: str) -> str:
+        """Рендерит заметки и открытые вопросы."""
+        notes_text = self._escape_block(trip["notes"] or "—")
+        open_questions = (trip.get("open_questions_text") or "").strip()
+        open_questions_block = f"\n\n<b>{tr(lang, 'summary_open_questions')}</b>\n{html.escape(open_questions)}" if open_questions else ""
+        
+        return "\n\n" + f"<b>{tr(lang, 'summary_notes')}</b>\n{notes_text}" + open_questions_block
+    
+    def _render_structured_results(self, trip: dict, lang: str, has_destination: bool) -> str:
+        """Рендерит структурированные результаты (билеты, жильё и т.д.)."""
+        if not has_destination:
+            return ""
+        
+        sections = [
+            self._category_section(trip, "flight_results"),
+            self._category_section(trip, "housing_results"),
+            self._category_section(trip, "activity_results"),
+            self._category_section(trip, "transport_results"),
+            self._category_section(trip, "rental_results"),
+        ]
+        structured_block = "\n\n".join(section for section in sections if section)
+        
+        links_text = (trip.get("links_text") or "").strip()
+        links_block = f"\n\n<b>Полезные ссылки</b>\n{html.escape(links_text)}" if links_text and not structured_block else ""
+        
+        weather_text = (trip["weather_text"] or "").strip()
+        weather_block = f"\n\n<b>{tr(lang, 'summary_weather')}</b>\n{html.escape(weather_text)}" if weather_text else ""
+        
+        return (
+            (f"\n\n{structured_block}" if structured_block else "")
             + links_block
             + weather_block
         )

@@ -27,7 +27,6 @@ def test_build_application_uses_default_sequential_updates(tmp_path) -> None:
     fake_builder = FakeBuilder()
     settings = SimpleNamespace(
         telegram_token="token",
-        log_level="INFO",
         database_dsn=str(tmp_path / "app.db"),
         openrouter_api_key="",
         openrouter_model="",
@@ -37,8 +36,7 @@ def test_build_application_uses_default_sequential_updates(tmp_path) -> None:
         travelpayouts_api_key="",
         travelpayouts_marker="",
         travelpayouts_trs="",
-        playwright_enabled=False,
-        playwright_timeout_ms=1000,
+        log_level="INFO",
     )
 
     with patch.object(app_module, "load_settings", return_value=settings), patch.object(
@@ -55,7 +53,6 @@ def test_build_application_uses_llm_planner_when_provider_pool_is_available(tmp_
     fake_builder = FakeBuilder()
     settings = SimpleNamespace(
         telegram_token="token",
-        log_level="INFO",
         database_dsn=str(tmp_path / "app.db"),
         openrouter_api_key="",
         openrouter_model="",
@@ -65,8 +62,7 @@ def test_build_application_uses_llm_planner_when_provider_pool_is_available(tmp_
         travelpayouts_api_key="",
         travelpayouts_marker="",
         travelpayouts_trs="",
-        playwright_enabled=False,
-        playwright_timeout_ms=1000,
+        log_level="INFO",
     )
     providers = [
         LLMProvider(

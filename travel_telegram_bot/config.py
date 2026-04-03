@@ -24,8 +24,6 @@ class Settings:
     travelpayouts_marker: int | None = None
     travelpayouts_trs: int | None = None
     log_level: str = "INFO"
-    playwright_enabled: bool = False
-    playwright_timeout_ms: int = 12000
 
 
 def _resolve_database_path(database_path: str) -> str:
@@ -58,8 +56,6 @@ def load_settings() -> Settings:
     travelpayouts_api_key = os.getenv("TRAVELPAYOUTS_API_KEY", "").strip()
     travelpayouts_marker_raw = os.getenv("TRAVELPAYOUTS_MARKER", "").strip()
     travelpayouts_trs_raw = os.getenv("TRAVELPAYOUTS_TRS", "").strip()
-    playwright_enabled = os.getenv("PLAYWRIGHT_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
-    playwright_timeout_raw = os.getenv("PLAYWRIGHT_TIMEOUT_MS", "12000").strip()
 
     if not telegram_token:
         raise ValueError(
@@ -78,6 +74,4 @@ def load_settings() -> Settings:
         travelpayouts_marker=int(travelpayouts_marker_raw) if travelpayouts_marker_raw.isdigit() else None,
         travelpayouts_trs=int(travelpayouts_trs_raw) if travelpayouts_trs_raw.isdigit() else None,
         log_level=log_level or "INFO",
-        playwright_enabled=playwright_enabled,
-        playwright_timeout_ms=int(playwright_timeout_raw or "12000"),
     )

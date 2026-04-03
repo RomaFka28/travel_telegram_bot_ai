@@ -121,10 +121,7 @@ def build_application():
     )
     flight_provider = TravelpayoutsFlightProvider(settings.travelpayouts_api_key, partner_links)
     service = TripService(database, planner, flight_provider)
-    housing_provider = build_housing_provider(
-        playwright_enabled=settings.playwright_enabled,
-        timeout_ms=settings.playwright_timeout_ms,
-    )
+    housing_provider = build_housing_provider()
     handlers = BotHandlers(database, planner, formatter, service, housing_provider, flight_provider)
 
     app = (
