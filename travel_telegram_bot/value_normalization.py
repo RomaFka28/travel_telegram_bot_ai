@@ -14,6 +14,9 @@ PLACEHOLDER_VALUES = {
     "n/a",
 }
 
+# Максимальный размер source_prompt для защиты от неограниченного роста
+SOURCE_PROMPT_MAX_LENGTH = 4000
+
 
 def normalize_optional_text(value: str | None) -> str:
     return (value or "").strip()
@@ -29,3 +32,15 @@ def normalized_search_value(value: str | None) -> str | None:
     if is_placeholder_value(normalized):
         return None
     return normalized
+
+
+def truncate_source_prompt(value: str, max_length: int = SOURCE_PROMPT_MAX_LENGTH) -> str:
+    """
+    Обрезает source_prompt до безопасного размера.
+    Сохраняет последние max_length символов, чтобы контекст оставался актуальным.
+    """
+    text = (value or "").strip()
+    if len(text) <= max_length:
+        return text
+    # Берём хвост, чтобы сохранить самый свежий контекст
+    return text[-max_length:]

@@ -1,28 +1,61 @@
+# Environment variables (SENSITIVE)
 .env
 *.env
+.env.local
+.env.production
+.env.*.local
+
+# Python
 travel_telegram_bot/.env
 .pytest_cache/
 pytest-cache-files-*/
 travel_telegram_bot/.pytest_tmp/
-travel_telegram_bot/pytest-tmp-run/
-travel_telegram_bot/pytest-tmp-run2/
+travel_telegram_bot/pytest-tmp-*/
 travel_telegram_bot/pytest-tmp-run*/
+travel_telegram_bot/codex-pytest-*/
 .venv/
+venv/
+env/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
 .DS_Store
 
 # Local SQLite data
 travel_telegram_bot/data/
 *.db
+*.db-journal
+*.db-wal
 *.sqlite
 *.sqlite3
+
+# Manual test runs
+travel_telegram_bot/manual-test-runs/
+travel_telegram_bot/manual-test-runs-*/
 
 # IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

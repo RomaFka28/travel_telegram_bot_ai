@@ -3,9 +3,9 @@
 import json
 import re
 import urllib.parse
-import urllib.request
 from datetime import date
 
+from http_utils import safe_http_get
 from travel_locale import detect_route_locale
 from travel_result_models import TravelSearchResult, trim_results
 from value_normalization import normalized_search_value
@@ -224,10 +224,9 @@ def _resolve_iata_code(term: str | None) -> str:
         ("types[]", "airport"),
     ]
     url = "https://autocomplete.travelpayouts.com/places2?" + urllib.parse.urlencode(params)
-    request = urllib.request.Request(url, method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        raw = safe_http_get(url, max_retries=2, timeout=8)
+        payload = json.loads(raw.decode("utf-8", errors="replace"))
     except Exception:
         return ""
     if not isinstance(payload, list):

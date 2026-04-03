@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 import math
 import re
+from threading import Lock
 
 from travel_links import CATEGORY_KEYWORDS, detect_link_needs
 from travel_planner import TravelPlanner
@@ -13,6 +14,35 @@ TRAVEL_TRIGGERS = [
 ]
 
 KNOWN_NON_NAMES = {"не", "да", "ну", "ой", "эй", "все", "там", "тут", "так"}
+
+
+# Глобальный кэш для city_names (инициализируется лениво)
+_CITY_NAMES_CACHE: set[str] | None = None
+_CITY_NAMES_LOCK = Lock()
+
+
+def _get_or_build_city_names() -> set[str]:
+    """Лениво строит и кэширует названия городов (thread-safe)."""
+    global _CITY_NAMES_CACHE
+    
+    if _CITY_NAMES_CACHE is not None:
+        return _CITY_NAMES_CACHE
+    
+    with _CITY_NAMES_LOCK:
+        if _CITY_NAMES_CACHE is not None:
+            return _CITY_NAMES_CACHE
+        
+        from travel_planner import DESTINATIONS
+        
+        names: set[str] = set()
+        for profile in DESTINATIONS:
+            names.add(profile.key.lower())
+            names.add(profile.display_name.lower())
+            for alias in profile.aliases:
+                names.add(alias.lower())
+        
+        _CITY_NAMES_CACHE = names
+        return names
 
 
 @dataclass
@@ -34,20 +64,18 @@ class ChatSignal:
 
 
 class GroupChatAnalyzer:
+    """
+    Анализатор групповых сообщений.
+    
+    Использует общий кэш названий городов для всех экземпляров.
+    Создавать можно без опаски — city_names не пересобирается.
+    """
+    
     def __init__(self) -> None:
+        # Используем общий кэш вместо создания нового
+        self._city_names: set[str] = _get_or_build_city_names()
+        # TravelPlanner нужен только для извлечения сущностей — переиспользуем общий
         self._planner = TravelPlanner()
-        self._city_names: set[str] = self._collect_city_names()
-
-    def _collect_city_names(self) -> set[str]:
-        from travel_planner import DESTINATIONS
-
-        names: set[str] = set()
-        for profile in DESTINATIONS:
-            names.add(profile.key.lower())
-            names.add(profile.display_name.lower())
-            for alias in profile.aliases:
-                names.add(alias.lower())
-        return names
 
     def analyze(self, text: str) -> ChatSignal:
         normalized = text.lower().strip()

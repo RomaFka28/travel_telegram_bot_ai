@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import bot.trip_service as service_module
+import travel_locale as locale_module
 from bot.trip_service import TripService
 from database import Database
 from travel_planner import TravelPlanner
@@ -179,7 +180,99 @@ def test_build_entry_notice_is_short_and_requests_only_basic_identity(tmp_path) 
 
     notice = service._build_entry_notice(request)
 
+    assert "Уведомление по документам" not in notice
     assert "гражданство" in notice
     assert "по какому документу" in notice
     assert "срок действия паспорта" not in notice
     assert "дополнительные документы" not in notice
+
+
+def test_build_trip_payload_detects_route_locale_once(tmp_path) -> None:
+    _, planner, service = build_service(tmp_path)
+    request = planner.build_request_from_fields(
+        title="Стамбул",
+        destination="Стамбул",
+        origin="Тбилиси",
+        dates_text="12 июня",
+        days_count=3,
+        group_size=1,
+        budget_text="бизнес",
+        interests_text="еда",
+        notes="",
+        source_prompt="Хочу в Стамбул",
+        language_code="ru",
+    )
+    plan = SimpleNamespace(
+        context_text="context",
+        itinerary_text="itinerary",
+        logistics_text="logistics",
+        stay_text="stay",
+        alternatives_text="alternatives",
+        budget_breakdown_text="budget",
+        budget_total_text="total",
+    )
+
+    with patch.object(
+        service,
+        "_collect_structured_results",
+        return_value=([], {"flight_results": [], "housing_results": [], "activity_results": [], "transport_results": [], "rental_results": []}, "", ""),
+    ), patch("bot.trip_service.detect_route_locale", return_value=locale_module.RouteLocale("Georgia", "Turkey")) as locale_mock:
+        payload = service._build_trip_payload(request, plan)
+
+    assert payload["entry_requirements_text"]
+    locale_mock.assert_called_once_with("Стамбул", "Тбилиси")
+
+
+def test_resolve_place_country_uses_positive_ttl_cache() -> None:
+    locale_module._clear_resolve_place_country_cache()
+    moments = iter(
+        [
+            100.0,
+            100.1,
+            100.2,
+            100.0 + locale_module.COUNTRY_CACHE_TTL_SECONDS + 1,
+            100.0 + locale_module.COUNTRY_CACHE_TTL_SECONDS + 1.1,
+        ]
+    )
+
+    with patch("travel_locale.time.monotonic", side_effect=lambda: next(moments)), patch(
+        "travel_locale.geocode_city",
+        side_effect=[
+            SimpleNamespace(country="Turkey"),
+            SimpleNamespace(country="Turkey"),
+        ],
+    ) as geocode_mock:
+        first = locale_module.resolve_place_country("Стамбул")
+        second = locale_module.resolve_place_country("Стамбул")
+        third = locale_module.resolve_place_country("Стамбул")
+
+    assert first == "Turkey"
+    assert second == "Turkey"
+    assert third == "Turkey"
+    assert geocode_mock.call_count == 2
+
+
+def test_resolve_place_country_retries_none_after_negative_ttl() -> None:
+    locale_module._clear_resolve_place_country_cache()
+    moments = iter(
+        [
+            200.0,
+            200.1,
+            200.2,
+            200.0 + locale_module.COUNTRY_CACHE_NEGATIVE_TTL_SECONDS + 1,
+            200.0 + locale_module.COUNTRY_CACHE_NEGATIVE_TTL_SECONDS + 1.1,
+        ]
+    )
+
+    with patch("travel_locale.time.monotonic", side_effect=lambda: next(moments)), patch(
+        "travel_locale.geocode_city",
+        side_effect=[None, SimpleNamespace(country="Turkey")],
+    ) as geocode_mock:
+        first = locale_module.resolve_place_country("Стамбул")
+        second = locale_module.resolve_place_country("Стамбул")
+        third = locale_module.resolve_place_country("Стамбул")
+
+    assert first is None
+    assert second is None
+    assert third == "Turkey"
+    assert geocode_mock.call_count == 2

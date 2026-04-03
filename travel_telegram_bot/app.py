@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -34,9 +35,12 @@ from health_server import start_if_render
 from housing_search import build_housing_provider
 from llm_provider_pool import LLMProviderPool, build_provider_list
 from llm_travel_planner import LLMTravelPlanner
+from logging_config import get_logger, setup_logging
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient, TravelpayoutsPartnerLinksConfig
 from travel_planner import TravelPlanner
+
+logger = get_logger(__name__)
 
 
 def _database_target_label(database: Database) -> str:
@@ -72,14 +76,19 @@ async def post_init(application) -> None:
 
 def build_application():
     settings = load_settings()
-    logging.basicConfig(
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-        level=getattr(logging, settings.log_level, logging.INFO),
+    
+    # Настраиваем расширенную систему логирования
+    log_file = "logs/bot.log" if not os.getenv("RENDER") else None
+    setup_logging(
+        level=settings.log_level,
+        log_file=log_file,
+        max_bytes=10 * 1024 * 1024,  # 10 MB
+        backup_count=5,
     )
 
     database = Database(settings.database_dsn)
     database.init_db()
-    logging.getLogger(__name__).info(
+    logger.info(
         "Database backend ready: database_backend=%s target=%s",
         "postgres" if database.is_postgres else "sqlite",
         _database_target_label(database),
@@ -95,13 +104,13 @@ def build_application():
     if providers:
         pool = LLMProviderPool(providers)
         planner = LLMTravelPlanner(pool)
-        logging.getLogger(__name__).info(
+        logger.info(
             "LLM provider pool ready: %s",
             " -> ".join(f"{provider.name}({provider.daily_limit}/day)" for provider in providers),
         )
     else:
         planner = TravelPlanner()
-        logging.getLogger(__name__).info("No LLM API keys configured, using heuristic planner")
+        logger.info("No LLM API keys configured, using heuristic planner")
     formatter = TripFormatter(database)
     partner_links = TravelpayoutsPartnerLinksClient(
         TravelpayoutsPartnerLinksConfig(
@@ -193,5 +202,11 @@ def build_application():
 if __name__ == "__main__":
     # Render Web Service requires binding to $PORT.
     start_if_render()
+    logger.info("🚀 Starting Telegram bot...")
     application = build_application()
-    application.run_polling(allowed_updates=None, drop_pending_updates=True)
+    logger.info("Bot application built, starting polling...")
+    try:
+        application.run_polling(allowed_updates=None, drop_pending_updates=True)
+    except Exception as e:
+        logger.critical(f"Bot crashed: {e.__class__.__name__}: {e}", exc_info=True)
+        raise

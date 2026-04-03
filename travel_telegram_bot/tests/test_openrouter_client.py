@@ -22,14 +22,14 @@ def test_build_trip_plan_payload_enables_web_search_plugin() -> None:
     payload = build_trip_plan_payload(
         OpenRouterConfig(
             api_key="test-key",
-            model="stepfun/step-3.5-flash:free",
+            model="google/gemini-2.0-flash:free",
             use_web_search=True,
             web_max_results=4,
         ),
         make_request("en"),
     )
 
-    assert payload["model"] == "stepfun/step-3.5-flash:free"
+    assert payload["model"] == "google/gemini-2.0-flash:free"
     assert payload["plugins"] == [{"id": "web", "max_results": 4}]
     assert payload["messages"][0]["role"] == "system"
     assert "Return only valid JSON" in payload["messages"][0]["content"]
@@ -60,6 +60,8 @@ def test_build_trip_plan_payload_does_not_send_plugins_to_gemini_or_groq() -> No
         ),
         make_request("en"),
     )
+    assert "plugins" not in gemini_payload
+
     groq_payload = build_trip_plan_payload(
         OpenRouterConfig(
             api_key="test-key",
@@ -69,9 +71,20 @@ def test_build_trip_plan_payload_does_not_send_plugins_to_gemini_or_groq() -> No
         ),
         make_request("en"),
     )
-
-    assert "plugins" not in gemini_payload
     assert "plugins" not in groq_payload
+
+
+def test_build_trip_plan_payload_does_not_send_plugins_to_qwen() -> None:
+    """Qwen не поддерживает web search плагин на OpenRouter."""
+    payload = build_trip_plan_payload(
+        OpenRouterConfig(
+            api_key="test-key",
+            model="qwen/qwen3.6-plus:free",
+            use_web_search=True,
+        ),
+        make_request("en"),
+    )
+    assert "plugins" not in payload
 
 
 def test_build_request_headers_include_standard_user_agent() -> None:

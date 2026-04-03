@@ -1,6 +1,6 @@
 ﻿import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from bot.formatters import TripFormatter
 from bot.handlers import BotHandlers
@@ -9,6 +9,7 @@ from database import Database
 from housing_search import LinkOnlyHousingSearchProvider
 from llm_provider_pool import LLMProvider, LLMProviderPool
 from llm_travel_planner import LLMTravelPlanner
+from telegram.error import Conflict
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from travel_result_models import TravelSearchResult
@@ -196,7 +197,7 @@ def test_plan_command_without_args_starts_pending_flow(tmp_path) -> None:
 
     asyncio.run(handlers.plan_command(update, context))
 
-    assert context.chat_data["pending_plan_prompt"] is True
+    assert context.chat_data["pending_plan_prompt:1"] is True
     assert "Отправьте следующим сообщением" in message.replies[-1]["text"]
     assert "сколько человек" in message.replies[-1]["text"]
     assert "в одну сторону" in message.replies[-1]["text"]
@@ -238,10 +239,23 @@ def test_status_command_describes_active_trip_context(tmp_path) -> None:
     assert "Казань" in rendered
 
 
+def test_error_handler_stops_application_on_polling_conflict(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    stop_running = Mock()
+    context = SimpleNamespace(
+        error=Conflict("terminated by other getUpdates request"),
+        application=SimpleNamespace(stop_running=stop_running),
+    )
+
+    asyncio.run(handlers.error_handler(update=None, context=context))
+
+    stop_running.assert_called_once_with()
+
+
 def test_plan_pending_message_in_private_chat_creates_trip(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     context = DummyContext()
-    context.chat_data["pending_plan_prompt"] = True
+    context.chat_data["pending_plan_prompt:1"] = True
     update, message = make_update(
         text="Хочу с друзьями в Казань на 3 дня, нас 4, из Томска, туда 12 июня, обратно 15 июня, бюджет средний",
         chat_id=1502,
@@ -259,7 +273,7 @@ def test_plan_pending_message_in_private_chat_creates_trip(tmp_path) -> None:
 def test_plan_pending_message_requests_missing_details_before_creating_trip(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     context = DummyContext()
-    context.chat_data["pending_plan_prompt"] = True
+    context.chat_data["pending_plan_prompt:1"] = True
 
     first_update, first_message = make_update(
         text="Хочу в Стамбул 12 июня, нужен билет, бюджет бизнес, люблю прогулки и еду",
@@ -290,7 +304,7 @@ def test_plan_pending_message_requests_missing_details_before_creating_trip(tmp_
 def test_plan_pending_message_in_group_chat_creates_trip(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     context = DummyContext()
-    context.chat_data["pending_plan_prompt"] = True
+    context.chat_data["pending_plan_prompt:1"] = True
     update, message = make_update(
         text="Едем в Сочи вдвоем, вылет из Новосибирска, туда 12 июня, обратно 18 июня, бюджет комфорт",
         chat_id=1503,
@@ -303,6 +317,78 @@ def test_plan_pending_message_in_group_chat_creates_trip(tmp_path) -> None:
     assert trip is not None
     assert trip["destination"] == "Сочи"
     assert "Собрал новый план для этой группы" in message.replies[0]["text"]
+
+
+def test_group_pending_plan_prompt_is_scoped_to_requesting_user(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    database.toggle_autodraft(1504)
+    shared_chat_data: dict[str, object] = {"pending_plan_prompt:1": True}
+    first_context = DummyContext()
+    first_context.chat_data = shared_chat_data
+    second_context = DummyContext()
+    second_context.chat_data = shared_chat_data
+
+    second_update, second_message = make_update(
+        text="Едем в Сочи вдвоем, вылет из Новосибирска, туда 12 июня, обратно 18 июня, бюджет комфорт",
+        chat_id=1504,
+        chat_type="group",
+        user_id=2,
+        username="user2",
+    )
+    asyncio.run(handlers.handle_group_message(second_update, second_context))
+
+    assert database.get_active_trip(1504) is None
+    assert second_message.replies == []
+    assert shared_chat_data["pending_plan_prompt:1"] is True
+
+    first_update, first_message = make_update(
+        text="Едем в Сочи вдвоем, вылет из Новосибирска, туда 12 июня, обратно 18 июня, бюджет комфорт",
+        chat_id=1504,
+        chat_type="group",
+        user_id=1,
+        username="user1",
+    )
+    asyncio.run(handlers.handle_group_message(first_update, first_context))
+
+    trip = database.get_active_trip(1504)
+    assert trip is not None
+    assert trip["destination"] == "Сочи"
+    assert "Собрал новый план для этой группы" in first_message.replies[0]["text"]
+
+
+def test_group_plan_followup_is_scoped_to_requesting_user(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    shared_chat_data: dict[str, object] = {}
+    first_context = DummyContext()
+    first_context.chat_data = shared_chat_data
+    second_context = DummyContext()
+    second_context.chat_data = shared_chat_data
+
+    first_update, first_message = make_update(
+        text="Хочу в Стамбул 12 июня, нужен билет, бюджет бизнес, люблю прогулки и еду",
+        chat_id=1514,
+        chat_type="group",
+        user_id=1,
+        username="user1",
+    )
+    asyncio.run(handlers._create_trip_from_text(first_update, first_update.effective_message.text, first_context))
+
+    assert "plan_followup:1" in shared_chat_data
+    assert database.get_active_trip(1514) is None
+    assert "вылет" in first_message.replies[-1]["text"].lower()
+
+    second_update, second_message = make_update(
+        text="Тбилиси",
+        chat_id=1514,
+        chat_type="group",
+        user_id=2,
+        username="user2",
+    )
+    asyncio.run(handlers.handle_group_message(second_update, second_context))
+
+    assert database.get_active_trip(1514) is None
+    assert shared_chat_data["plan_followup:1"]["index"] == 0
+    assert second_message.replies == []
 
 
 def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
@@ -1246,6 +1332,112 @@ def test_handle_group_message_awaits_async_service_helpers(tmp_path) -> None:
     refresh_mock.assert_awaited_once_with(int(active_trip["id"]))
 
 
+def test_handle_group_message_reports_rebuild_failure_to_user(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    trip_id = database.create_trip(
+        chat_id=1805,
+        created_by=1,
+        payload={
+            "title": "Казань • 3 дн.",
+            "destination": "Казань",
+            "origin": "Томск",
+            "dates_text": "не указаны",
+            "days_count": 3,
+            "group_size": 2,
+            "budget_text": "средний",
+            "interests_text": "еда",
+            "notes": "",
+            "source_prompt": "",
+            "detected_needs": "",
+            "status": "active",
+        },
+    )
+    signal = SimpleNamespace(
+        has_travel_intent=True,
+        destination="Казань",
+        destination_votes=[],
+        origin=None,
+        dates_text="12–14 июня",
+        budget_hint="комфорт",
+        interests=[],
+        detected_needs=[],
+        raw_text="Давайте тогда 12–14 июня и бюджет комфорт",
+    )
+
+    update_message, message = make_update(text="Давайте тогда 12–14 июня и бюджет комфорт", chat_id=1805)
+    with patch.object(
+        handlers.service,
+        "_rebuild_trip",
+        new=AsyncMock(side_effect=RuntimeError("boom")),
+    ) as rebuild_mock, patch.object(
+        handlers.service,
+        "_refresh_weather_for_trip",
+        new=AsyncMock(),
+    ) as refresh_mock, patch("bot.handlers.logger.exception") as logger_mock, patch(
+        "bot.group_chat_analyzer.GroupChatAnalyzer"
+    ) as analyzer_cls:
+        analyzer_cls.return_value.analyze_messages.return_value = signal
+        asyncio.run(handlers.handle_group_message(update_message, DummyContext()))
+
+    rebuild_mock.assert_awaited_once_with(trip_id)
+    refresh_mock.assert_not_awaited()
+    logger_mock.assert_called_once()
+    assert "Не удалось обновить поездку автоматически" in message.replies[-1]["text"]
+
+
+def test_handle_group_message_reports_weather_refresh_failure_to_user(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    trip_id = database.create_trip(
+        chat_id=1805,
+        created_by=1,
+        payload={
+            "title": "Казань • 3 дн.",
+            "destination": "Казань",
+            "origin": "Томск",
+            "dates_text": "не указаны",
+            "days_count": 3,
+            "group_size": 2,
+            "budget_text": "средний",
+            "interests_text": "еда",
+            "notes": "",
+            "source_prompt": "",
+            "detected_needs": "",
+            "status": "active",
+        },
+    )
+    signal = SimpleNamespace(
+        has_travel_intent=True,
+        destination="Казань",
+        destination_votes=[],
+        origin=None,
+        dates_text="12–14 июня",
+        budget_hint="комфорт",
+        interests=[],
+        detected_needs=[],
+        raw_text="Давайте тогда 12–14 июня и бюджет комфорт",
+    )
+
+    update_message, message = make_update(text="Давайте тогда 12–14 июня и бюджет комфорт", chat_id=1805)
+    with patch.object(
+        handlers.service,
+        "_rebuild_trip",
+        new=AsyncMock(),
+    ) as rebuild_mock, patch.object(
+        handlers.service,
+        "_refresh_weather_for_trip",
+        new=AsyncMock(side_effect=RuntimeError("weather")),
+    ) as refresh_mock, patch("bot.handlers.logger.exception") as logger_mock, patch(
+        "bot.group_chat_analyzer.GroupChatAnalyzer"
+    ) as analyzer_cls:
+        analyzer_cls.return_value.analyze_messages.return_value = signal
+        asyncio.run(handlers.handle_group_message(update_message, DummyContext()))
+
+    rebuild_mock.assert_awaited_once_with(trip_id)
+    refresh_mock.assert_awaited_once_with(trip_id)
+    logger_mock.assert_called_once()
+    assert "Не удалось обновить поездку автоматически" in message.replies[-1]["text"]
+
+
 def test_handle_group_message_awaits_auto_draft_from_signal(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     trip_id = database.create_trip(
@@ -1339,3 +1531,21 @@ def test_handle_group_message_keeps_both_recent_messages_under_concurrency(tmp_p
     assert len(recent_messages) == 2
     assert update1.effective_message.text in recent_messages
     assert update2.effective_message.text in recent_messages
+
+
+def test_select_trip_command_without_args_returns_usage_message(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    update, message = make_update(chat_id=1810)
+
+    asyncio.run(handlers.select_trip_command(update, DummyContext()))
+
+    assert message.replies[-1]["text"] == "Использование: /select_trip 12"
+
+
+def test_delete_trip_command_without_args_returns_usage_message(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    update, message = make_update(chat_id=1811)
+
+    asyncio.run(handlers.delete_trip_command(update, DummyContext()))
+
+    assert message.replies[-1]["text"] == "Использование: /delete_trip 12"

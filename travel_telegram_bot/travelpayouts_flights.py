@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import datetime
 import urllib.parse
-import urllib.request
-from dataclasses import dataclass
 
+from date_utils import parse_dates_range
+from http_utils import safe_http_get
 from travel_result_models import TravelSearchResult, trim_results
 from travel_planner import BUDGET_HINTS
 from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient
 from value_normalization import normalized_search_value
-from weather_service import _parse_dates_range
 
 
 class TravelpayoutsError(RuntimeError):
@@ -83,7 +83,7 @@ class TravelpayoutsFlightProvider:
             try:
                 origin_match = self._resolve_place(normalized_origin)
                 destination_match = self._resolve_place(normalized_destination)
-                date_range = _parse_dates_range(dates_text)
+                date_range = parse_dates_range(dates_text)
                 one_way = self._is_one_way(source_text, dates_text)
                 search_url = self._build_search_url(
                     origin_code=origin_match.code,
@@ -139,7 +139,7 @@ class TravelpayoutsFlightProvider:
         try:
             origin_match = self._resolve_place(normalized_origin)
             destination_match = self._resolve_place(normalized_destination)
-            date_range = _parse_dates_range(dates_text)
+            date_range = parse_dates_range(dates_text)
             one_way = self._is_one_way(source_text, dates_text)
             trip_class = self._budget_trip_class(budget_text)
             if date_range:
@@ -380,7 +380,7 @@ class TravelpayoutsFlightProvider:
             ("trip_class", str(max(0, min(int(trip_class or 0), 2)))),
             ("token", self._api_key),
         ]
-        date_range = _parse_dates_range(dates_text)
+        date_range = parse_dates_range(dates_text)
         if exact_depart_date:
             params.extend(
                 [
@@ -534,17 +534,17 @@ class TravelpayoutsFlightProvider:
         return max(1, min(score, 10))
 
     def _get_json(self, url: str) -> object:
-        request = urllib.request.Request(
-            url,
-            method="GET",
-            headers={"X-Access-Token": self._api_key},
-        )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                raw = response.read().decode("utf-8", errors="replace")
+            raw = safe_http_get(
+                url,
+                headers={"X-Access-Token": self._api_key},
+                max_retries=2,
+                timeout=20,
+            )
+            raw_str = raw.decode("utf-8", errors="replace")
         except Exception as exc:
             raise TravelpayoutsError(str(exc)) from exc
         try:
-            return json.loads(raw)
+            return json.loads(raw_str)
         except json.JSONDecodeError as exc:
             raise TravelpayoutsError("\u043f\u0440\u0438\u0448\u0451\u043b \u043d\u0435\u0432\u0430\u043b\u0438\u0434\u043d\u044b\u0439 JSON") from exc

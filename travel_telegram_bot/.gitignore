@@ -1,0 +1,47 @@
+# Local environment (SENSITIVE - never commit)
+.env
+.env.local
+.env.production
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environment
+.venv/
+venv/
+
+# Database files
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Test artifacts
+pytest-tmp-*/
+pytest-tmp-run*/
+codex-pytest-*/
+.pytest_tmp/
+
+# Manual test runs
+manual-test-runs/
+manual-test-runs-*/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/

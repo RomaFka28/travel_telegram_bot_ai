@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-import urllib.request
 from dataclasses import dataclass
+
+from http_utils import safe_http_post
 
 
 class TravelpayoutsPartnerLinkError(RuntimeError):
@@ -38,28 +39,28 @@ class TravelpayoutsPartnerLinksClient:
         if sub_id:
             payload["links"] = [{"url": url, "sub_id": sub_id[:64]}]
 
-        request = urllib.request.Request(
-            url="https://api.travelpayouts.com/links/v1/create",
-            data=json.dumps(payload).encode("utf-8"),
-            method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "x-api-token": self._config.api_key,
-            },
-        )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
-                raw = response.read().decode("utf-8", errors="replace")
-        except Exception as exc:  # noqa: BLE001
+            raw = safe_http_post(
+                "https://api.travelpayouts.com/links/v1/create",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-token": self._config.api_key,
+                },
+                max_retries=2,
+                timeout=20,
+            )
+            raw_str = raw.decode("utf-8", errors="replace")
+        except Exception as exc:
             raise TravelpayoutsPartnerLinkError(str(exc)) from exc
 
         try:
-            data = json.loads(raw)
+            data = json.loads(raw_str)
             result = data.get("result") or {}
             links = result.get("links") or []
             first = links[0] if links else {}
             partner_url = str(first.get("partner_url") or "").strip()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise TravelpayoutsPartnerLinkError("invalid partner links response") from exc
 
         return partner_url or url

@@ -16,7 +16,7 @@ class Settings:
     telegram_token: str
     database_dsn: str
     openrouter_api_key: str = ""
-    openrouter_model: str = "stepfun/step-3.5-flash:free"
+    openrouter_model: str = "qwen/qwen3.6-plus:free"
     openrouter_web_search: bool = True
     gemini_api_key: str = ""
     groq_api_key: str = ""
@@ -51,7 +51,7 @@ def load_settings() -> Settings:
     database_path = os.getenv("DATABASE_PATH", "data/travel_bot.db").strip()
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
-    openrouter_model = os.getenv("OPENROUTER_MODEL", "stepfun/step-3.5-flash:free").strip()
+    openrouter_model = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.6-plus:free").strip()
     openrouter_web_search = os.getenv("OPENROUTER_WEB_SEARCH", "true").strip().lower() not in {"0", "false", "no", "off"}
     gemini_api_key = os.getenv("GEMINI_API_KEY", "").strip()
     groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -70,7 +70,7 @@ def load_settings() -> Settings:
         telegram_token=telegram_token,
         database_dsn=database_url or _resolve_database_path(database_path),
         openrouter_api_key=openrouter_api_key,
-        openrouter_model=openrouter_model or "stepfun/step-3.5-flash:free",
+        openrouter_model=openrouter_model or "qwen/qwen3.6-plus:free",
         openrouter_web_search=openrouter_web_search,
         gemini_api_key=gemini_api_key,
         groq_api_key=groq_api_key,

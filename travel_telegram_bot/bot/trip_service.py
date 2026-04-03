@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import re
@@ -6,12 +6,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from database import Database
-from travel_locale import detect_route_locale
+from travel_locale import RouteLocale, detect_route_locale
 from travel_links import build_links_text, build_structured_link_results, detect_link_needs
 from travel_result_models import TravelSearchResult, serialize_needs, serialize_results, trim_results
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
-from value_normalization import normalized_search_value
+from trip_utils import has_budget_hint, has_dates_hint, has_days_hint
+from value_normalization import normalized_search_value, truncate_source_prompt
 from weather_service import WeatherError, fetch_weather_summary
 
 if TYPE_CHECKING:
@@ -133,9 +134,16 @@ class TripService:
             "rental_results": rental_results,
         }, tickets_text, links_text
 
-    def _build_open_questions(self, request, detected_needs: list[str], structured_results: dict[str, list[TravelSearchResult]]) -> str:
+    def _build_open_questions(
+        self,
+        request,
+        detected_needs: list[str],
+        structured_results: dict[str, list[TravelSearchResult]],
+        *,
+        route_locale: RouteLocale | None = None,
+    ) -> str:
         questions: list[str] = []
-        route_locale = detect_route_locale(request.destination, request.origin)
+        resolved_route_locale = route_locale or detect_route_locale(request.destination, request.origin)
         normalized_interests = (request.interests_text or "").strip().lower()
         has_specific_interests = normalized_interests not in {"", "не указаны", "не указано"}
         if not normalized_search_value(request.destination):
@@ -154,7 +162,7 @@ class TripService:
             questions.append("Подтвердить день выезда, чтобы подобрать дорогу без лишних пересадок.")
         if "excursions" in detected_needs and not has_specific_interests:
             questions.append("Выбрать тип экскурсий: прогулки, музеи, гастро или природа.")
-        if route_locale.is_international:
+        if resolved_route_locale.is_international:
             questions.append("Уточнить гражданство или тип паспорта, чтобы проверить визовые и въездные правила.")
 
         raw_text = f"{request.source_prompt}\n{request.notes}"
@@ -172,27 +180,17 @@ class TripService:
             unique_questions.append(question)
         return "\n".join(f"• {question}" for question in unique_questions[:6])
 
-    def _build_entry_notice(self, request) -> str:
-        route_locale = detect_route_locale(request.destination, request.origin)
-        if not route_locale.is_international:
+    def _build_entry_notice(self, request, *, route_locale: RouteLocale | None = None) -> str:
+        resolved_route_locale = route_locale or detect_route_locale(request.destination, request.origin)
+        if not resolved_route_locale.is_international:
             return ""
-        origin_country = route_locale.origin_country or "страны выезда"
-        destination_country = route_locale.destination_country or "страны назначения"
+        origin_country = resolved_route_locale.origin_country or "страны выезда"
+        destination_country = resolved_route_locale.destination_country or "страны назначения"
         return "\n".join(
             [
                 f"По въезду на маршруте {origin_country} → {destination_country} нужен один базовый ответ.",
                 "Напишите, какое у вас гражданство и по какому документу планируете лететь.",
                 "Этого хватит, чтобы понять, можно ли въезжать сейчас и что ещё понадобится.",
-            ]
-        )
-        origin_country = route_locale.origin_country or "страны выезда"
-        destination_country = route_locale.destination_country or "страны назначения"
-        return "\n".join(
-            [
-                f"Уведомление по документам для маршрута {origin_country} → {destination_country}.",
-                "Для точной проверки въезда нужны данные путешественника.",
-                "Укажите гражданство, тип паспорта или ВНЖ, срок действия паспорта и важные дополнительные документы.",
-                "После этого можно точнее понять, нужны ли виза, страховка, обратный билет или другие подтверждения.",
             ]
         )
 
@@ -212,7 +210,8 @@ class TripService:
             language_code=getattr(request, "language_code", "ru"),
         )
         detected_needs, structured_results, tickets_text, links_text = self._collect_structured_results(effective_request)
-        entry_requirements_text = self._build_entry_notice(effective_request)
+        route_locale = detect_route_locale(effective_request.destination, effective_request.origin)
+        entry_requirements_text = self._build_entry_notice(effective_request, route_locale=route_locale)
         return {
             "title": effective_request.title,
             "destination": effective_request.destination,
@@ -247,7 +246,12 @@ class TripService:
             "rental_results": serialize_results(structured_results["rental_results"]),
             "detected_needs": serialize_needs(detected_needs),
             "results_updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
-            "open_questions_text": self._build_open_questions(effective_request, detected_needs, structured_results),
+            "open_questions_text": self._build_open_questions(
+                effective_request,
+                detected_needs,
+                structured_results,
+                route_locale=route_locale,
+            ),
             "status": "active",
         }
 
@@ -255,12 +259,14 @@ class TripService:
         current = self._request_from_trip_row(trip)
         destination = self._planner._extract_destination(edit_text) or str(current["destination"])
         origin = self._planner._extract_origin(edit_text) or str(current["origin"])
-        days_count = self._planner._extract_days_count(edit_text) if self._has_days_hint(edit_text) else int(current["days_count"])
-        dates_text = self._planner._extract_dates(edit_text) if self._has_dates_hint(edit_text) else str(current["dates_text"])
-        budget_text = self._planner._extract_budget(edit_text) if self._has_budget_hint(edit_text) else str(current["budget_text"])
+        days_count = self._planner._extract_days_count(edit_text) if has_days_hint(edit_text) else int(current["days_count"])
+        dates_text = self._planner._extract_dates(edit_text) if has_dates_hint(edit_text) else str(current["dates_text"])
+        budget_text = self._planner._extract_budget(edit_text) if has_budget_hint(edit_text) else str(current["budget_text"])
         interests = self._planner._extract_interests(edit_text)
         interests_text = ", ".join(interests) if interests else str(current["interests_text"])
-        source_prompt = f"{current['source_prompt']}\n\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435: {edit_text}".strip()
+        source_prompt = truncate_source_prompt(
+            f"{current['source_prompt']}\n\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435: {edit_text}"
+        )
         return self._planner.build_request_from_fields(
             title=f"{destination} \u2022 {days_count} \u0434\u043d. \u2022 {int(current['group_size'])} \u0447\u0435\u043b.",
             destination=destination,
@@ -332,7 +338,7 @@ class TripService:
             budget_text=inferred_budget,
             interests_text=interests_text,
             notes=signal.raw_text,
-            source_prompt=signal.raw_text,
+            source_prompt=truncate_source_prompt(signal.raw_text),
             language_code=self._db.get_chat_language(chat_id),
         )
         plan = await asyncio.to_thread(self._planner.generate_plan, request)
@@ -341,65 +347,3 @@ class TripService:
         self._db.set_selected_trip(chat_id, trip_id)
         await self._refresh_weather_for_trip(trip_id)
         return trip_id
-
-    @staticmethod
-    def _has_days_hint(text: str) -> bool:
-        import re
-
-        return bool(
-            re.search(
-                r"\b\d{1,2}\s*(?:-|\u2013|\u2014|\u0434\u043e)?\s*\d{0,2}\s*(?:\u0434\u043d(?:\u044f|\u0435\u0439)?|\u0441\u0443\u0442(?:\u043e\u043a)?|\u043d\u043e\u0447(?:\u044c|\u0438|\u0435\u0439)?)",
-                text,
-                flags=re.IGNORECASE,
-            )
-        )
-
-    @staticmethod
-    def _has_budget_hint(text: str) -> bool:
-        lowered = text.lower()
-        return any(
-            keyword in lowered
-            for keyword in (
-                "\u0431\u044e\u0434\u0436",
-                "\u044d\u043a\u043e\u043d\u043e\u043c",
-                "\u0434\u0435\u0448\u0435\u0432",
-                "\u0434\u0451\u0448\u0435\u0432",
-                "\u043f\u043e\u0434\u0435\u0448\u0435\u0432",
-                "\u0441\u0440\u0435\u0434\u043d",
-                "\u043a\u043e\u043c\u0444\u043e\u0440\u0442",
-                "\u0431\u0438\u0437\u043d\u0435\u0441",
-                "\u043f\u0435\u0440\u0432\u044b\u0439 \u043a\u043b\u0430\u0441\u0441",
-                "\u043d\u0435 \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d",
-                "\u0431\u0435\u0437 \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u0439",
-                "\u043b\u044e\u0431\u043e\u0439 \u0431\u044e\u0434\u0436\u0435\u0442",
-                "\u043f\u0440\u0435\u043c\u0438\u0443\u043c",
-                "\u043b\u044e\u043a\u0441",
-                "\u0434\u043e ",
-                "\u043e\u0442 ",
-                "\u043d\u0430 ",
-                "\u043e\u043a\u043e\u043b\u043e ",
-            )
-        ) or bool(re.search(r"\b\d[\d\s]{3,}\b", lowered))
-
-    @staticmethod
-    def _has_dates_hint(text: str) -> bool:
-        import re
-
-        lowered = text.lower()
-        return any(
-            keyword in lowered
-            for keyword in (
-                "\u044f\u043d\u0432\u0430\u0440",
-                "\u0444\u0435\u0432\u0440\u0430\u043b",
-                "\u043c\u0430\u0440\u0442",
-                "\u0430\u043f\u0440\u0435\u043b",
-                "\u043c\u0430\u0439",
-                "\u0438\u044e\u043d",
-                "\u0438\u044e\u043b",
-                "\u0430\u0432\u0433\u0443\u0441\u0442",
-                "\u0441\u0435\u043d\u0442\u044f\u0431\u0440",
-                "\u043e\u043a\u0442\u044f\u0431\u0440",
-                "\u043d\u043e\u044f\u0431\u0440",
-                "\u0434\u0435\u043a\u0430\u0431\u0440",
-            )
-        ) or bool(re.search(r"\b\d{1,2}\s*(?:-|\u2013|\u2014|\u0434\u043e)\s*\d{1,2}\b", text))

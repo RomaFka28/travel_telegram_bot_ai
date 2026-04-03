@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import logging
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
-from functools import lru_cache
+from threading import Lock
+import time
 
 from value_normalization import normalized_search_value
 from weather_service import WeatherError, geocode_city
+
+logger = logging.getLogger(__name__)
 
 
 IATA_TRAVEL_INFO_URL = "https://www.iata.org/en/youandiata/travelers/"
@@ -125,6 +131,15 @@ CURRENCY_BY_COUNTRY = {
     "Switzerland": "CHF",
 }
 
+COUNTRY_CACHE_MAXSIZE = 256
+COUNTRY_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 часов для успешных запросов
+COUNTRY_CACHE_NEGATIVE_TTL_SECONDS = 5 * 60  # 5 минут для ошибок
+COUNTRY_CACHE_ERROR_TTL_SECONDS = 2 * 60  # 2 минуты для transient ошибок
+GEOCODE_TIMEOUT_SECONDS = 6.0
+
+_COUNTRY_CACHE: OrderedDict[str, tuple[float, str | None, bool]] = OrderedDict()  # (expires_at, value, is_error)
+_COUNTRY_CACHE_LOCK = Lock()
+
 
 @dataclass(slots=True)
 class RouteLocale:
@@ -140,18 +155,62 @@ class RouteLocale:
         return is_ru_or_cis_country(self.destination_country)
 
 
-@lru_cache(maxsize=256)
+def _cache_expiry_for(value: str | None, is_error: bool = False) -> float:
+    if is_error:
+        ttl_seconds = COUNTRY_CACHE_ERROR_TTL_SECONDS
+    elif value:
+        ttl_seconds = COUNTRY_CACHE_TTL_SECONDS
+    else:
+        ttl_seconds = COUNTRY_CACHE_NEGATIVE_TTL_SECONDS
+    return time.monotonic() + ttl_seconds
+
+
+def _resolve_place_country_uncached(normalized: str) -> tuple[str | None, bool]:
+    """
+    Возвращает (country, is_error).
+    is_error=True означает временную ошибку (стоит закэшировать кратко).
+    """
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            geo = executor.submit(geocode_city, normalized).result(timeout=GEOCODE_TIMEOUT_SECONDS)
+    except FutureTimeoutError:
+        logger.warning("Geocoding timeout for %r (%.1fs)", normalized, GEOCODE_TIMEOUT_SECONDS)
+        return None, True  # Временная ошибка — короткий TTL
+    except WeatherError as exc:
+        logger.warning("Geocoding error for %r: %s", normalized, exc)
+        return None, False  # Постоянная ошибка (город не найден) — обычный негативный TTL
+    if not geo:
+        return None, False
+    return (geo.country or "").strip() or None, False
+
+
+def _clear_resolve_place_country_cache() -> None:
+    with _COUNTRY_CACHE_LOCK:
+        _COUNTRY_CACHE.clear()
+
+
 def resolve_place_country(place: str) -> str | None:
     normalized = normalized_search_value(place)
     if not normalized:
         return None
-    try:
-        geo = geocode_city(normalized)
-    except WeatherError:
-        return None
-    if not geo:
-        return None
-    return (geo.country or "").strip() or None
+
+    now = time.monotonic()
+    with _COUNTRY_CACHE_LOCK:
+        cached = _COUNTRY_CACHE.get(normalized)
+        if cached is not None:
+            expires_at, cached_value, cached_is_error = cached
+            if expires_at > now:
+                _COUNTRY_CACHE.move_to_end(normalized)
+                return cached_value
+            _COUNTRY_CACHE.pop(normalized, None)
+
+    resolved_country, is_error = _resolve_place_country_uncached(normalized)
+    with _COUNTRY_CACHE_LOCK:
+        _COUNTRY_CACHE[normalized] = (_cache_expiry_for(resolved_country, is_error), resolved_country, is_error)
+        _COUNTRY_CACHE.move_to_end(normalized)
+        while len(_COUNTRY_CACHE) > COUNTRY_CACHE_MAXSIZE:
+            _COUNTRY_CACHE.popitem(last=False)
+    return resolved_country
 
 
 def is_ru_or_cis_country(country: str | None) -> bool:

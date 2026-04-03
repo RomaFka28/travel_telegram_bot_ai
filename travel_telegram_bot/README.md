@@ -122,7 +122,7 @@ python app.py
 - `TELEGRAM_BOT_TOKEN`
 - `DATABASE_URL` для Postgres в production
 - `OPENROUTER_API_KEY`, если используется LLM-планировщик в `/plan`
-- `OPENROUTER_MODEL=stepfun/step-3.5-flash:free`, если нужен быстрый бесплатный LLM-режим
+- `OPENROUTER_MODEL=qwen/qwen3.6-plus:free`, если нужен быстрый бесплатный LLM-режим
 - `OPENROUTER_WEB_SEARCH=true`, если нужен доступ модели к web search для более свежих travel-ответов
 - `TRAVELPAYOUTS_API_KEY`, если хотите подтягивать цены на билеты через Travelpayouts / Aviasales
 - `TRAVELPAYOUTS_MARKER` и `TRAVELPAYOUTS_TRS`, если хотите, чтобы ссылки на билеты конвертировались в partner links

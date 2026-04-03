@@ -5,11 +5,11 @@ import html
 import logging
 import re
 import time
-from datetime import UTC, datetime
 from typing import Final
 
-from telegram import ReplyKeyboardRemove, Update
+from telegram import Message, ReplyKeyboardRemove, Update
 from telegram.constants import ParseMode
+from telegram.error import Conflict
 from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.formatters import TripFormatter
@@ -34,8 +34,8 @@ from i18n import tr
 from llm_travel_planner import LLMTravelPlanner
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
-from weather_service import WeatherError, fetch_weather_summary
 from travel_result_models import deserialize_needs
+from value_normalization import truncate_source_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,29 @@ class BotHandlers:
         if chat_id is None:
             return "ru"
         return self.db.get_chat_language(chat_id)
+
+    @staticmethod
+    async def _parse_required_trip_id_arg(
+        message: Message,
+        args: list[str],
+        *,
+        usage_text: str,
+    ) -> int | None:
+        if not args:
+            await message.reply_text(usage_text)
+            return None
+        try:
+            return int(args[0])
+        except ValueError:
+            await message.reply_text("Нужен числовой ID поездки. Посмотрите его через /trips.")
+            return None
+
+    @staticmethod
+    def _scoped_chat_state_key(update: Update, base_key: str) -> str:
+        user = update.effective_user
+        if user is None:
+            return base_key
+        return f"{base_key}:{user.id}"
 
     @staticmethod
     def _build_plan_prompt_text(language_code: str = "ru") -> str:
@@ -262,6 +285,11 @@ class BotHandlers:
             )
         await chat.send_action("typing")
 
+        logger.info(
+            "trip_generation_start chat_id=%s destination=%s llm=%s",
+            chat.id, request.destination, isinstance(self.planner, LLMTravelPlanner),
+        )
+        
         if isinstance(self.planner, LLMTravelPlanner):
             plan = await self.planner.generate_plan_async(request)
         else:
@@ -275,6 +303,11 @@ class BotHandlers:
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
         self.db.set_selected_trip(chat.id, trip_id)
         await self.service._refresh_weather_for_trip(trip_id)
+        
+        logger.info(
+            "trip_created trip_id=%s chat_id=%s replaced=%s",
+            trip_id, chat.id, replaced_trip,
+        )
 
         summary_text = self.formatter._build_summary_html(trip_id)
         summary_keyboard = trip_summary_keyboard(trip_id, self._chat_language(chat.id))
@@ -305,7 +338,8 @@ class BotHandlers:
         return True
 
     async def _continue_plan_followup(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-        state = context.chat_data.get("plan_followup")
+        state_key = self._scoped_chat_state_key(update, "plan_followup")
+        state = context.chat_data.get(state_key)
         message = update.effective_message
         if not state or not message:
             return False
@@ -318,7 +352,9 @@ class BotHandlers:
 
         if field == "route_type":
             state["notes"] = f"{state.get('notes', '').strip()}\n{answer}".strip()
-            state["source_prompt"] = f"{state.get('source_prompt', '').strip()}\n{answer}".strip()
+            state["source_prompt"] = truncate_source_prompt(
+                f"{state.get('source_prompt', '').strip()}\n{answer}"
+            )
         else:
             state[field] = answer
 
@@ -327,7 +363,7 @@ class BotHandlers:
             await message.reply_text(self._plan_followup_question(state["fields"][state["index"]], state["language_code"]))
             return True
 
-        context.chat_data.pop("plan_followup", None)
+        context.chat_data.pop(state_key, None)
         request = self.planner.build_request_from_fields(
             title=str(state["title"]),
             destination=str(state["destination"]),
@@ -365,65 +401,10 @@ class BotHandlers:
         request.notes = ""
         followup_state = self._build_plan_followup_state(request, text)
         if followup_state and context is not None:
-            context.chat_data["plan_followup"] = followup_state
+            context.chat_data[self._scoped_chat_state_key(update, "plan_followup")] = followup_state
             await message.reply_text(self._plan_followup_question(followup_state["fields"][0], followup_state["language_code"]))
             return True
         return await self._finalize_trip_request(update, request)
-        chat = update.effective_chat
-        user = update.effective_user
-        if not chat:
-            return False
-        replaced_trip = self.db.get_active_trip(chat.id) is not None
-        progress_message = None
-        if isinstance(self.planner, LLMTravelPlanner):
-            progress_message = await message.reply_text(
-                "Thinking over the trip with AI, this may take up to a minute..."
-                if self._chat_language(chat.id) == "en"
-                else "Думаю над поездкой с помощью ИИ, это может занять до минуты..."
-            )
-        await chat.send_action("typing")
-
-        if isinstance(self.planner, LLMTravelPlanner):
-            plan = await self.planner.generate_plan_async(request)
-        else:
-            plan = await asyncio.to_thread(self.planner.generate_plan, request)
-        payload = await asyncio.to_thread(
-            self.service._build_trip_payload,
-            request,
-            plan,
-            notes_override="",
-        )
-        trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
-        self.db.set_selected_trip(chat.id, trip_id)
-        await self.service._refresh_weather_for_trip(trip_id)
-
-        summary_text = self.formatter._build_summary_html(trip_id)
-        summary_keyboard = trip_summary_keyboard(trip_id, self._chat_language(chat.id))
-        replaced_status_message = await self._replace_or_remove_progress_message(
-            progress_message,
-            summary_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=summary_keyboard,
-            disable_web_page_preview=True,
-        )
-        if not replaced_status_message:
-            await message.reply_text(
-                self.formatter.build_trip_created_text(
-                    replaced_trip=replaced_trip,
-                    chat_type=getattr(chat, "type", None),
-                    language_code=self._chat_language(chat.id),
-                )
-            )
-            await message.reply_text(
-                summary_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=summary_keyboard,
-                disable_web_page_preview=True,
-            )
-        entry_notice = self.formatter.build_entry_notice_text(trip_id)
-        if entry_notice:
-            await message.reply_text(entry_notice)
-        return True
 
     async def _should_send_group_reply(
         self,
@@ -493,232 +474,6 @@ class BotHandlers:
             await update.effective_message.reply_text(tr(self._chat_language(chat.id), "active_trip_missing"))
         return trip
 
-    def _request_from_trip_row(self, trip) -> dict[str, str | int]:
-        return {
-            "title": trip["title"] or "Новая поездка",
-            "destination": trip["destination"] or "",
-            "origin": trip["origin"] or "не указано",
-            "dates_text": trip["dates_text"] or "не указаны",
-            "days_count": int(trip["days_count"] or 3),
-            "group_size": int(trip["group_size"] or 2),
-            "budget_text": trip["budget_text"] or "Бизнес",
-            "interests_text": trip["interests_text"] or "город, еда",
-            "notes": trip["notes"] or "",
-            "source_prompt": trip["source_prompt"] or "",
-        }
-
-    @staticmethod
-    def _has_days_hint(text: str) -> bool:
-        return bool(
-            re.search(
-                r"\b\d{1,2}\s*(?:-|\u2013|\u2014|\u0434\u043e)?\s*\d{0,2}\s*(?:\u0434\u043d(?:\u044f|\u0435\u0439)?|\u0441\u0443\u0442(?:\u043e\u043a)?|\u043d\u043e\u0447(?:\u044c|\u0438|\u0435\u0439)?)",
-                text,
-                flags=re.IGNORECASE,
-            )
-        )
-
-    @staticmethod
-    def _has_budget_hint(text: str) -> bool:
-        lowered = text.lower()
-        return any(
-            keyword in lowered
-            for keyword in (
-                "\u0431\u044e\u0434\u0436",
-                "\u044d\u043a\u043e\u043d\u043e\u043c",
-                "\u0434\u0435\u0448\u0435\u0432",
-                "\u0434\u0451\u0448\u0435\u0432",
-                "\u043f\u043e\u0434\u0435\u0448\u0435\u0432",
-                "\u0441\u0440\u0435\u0434\u043d",
-                "\u043a\u043e\u043c\u0444\u043e\u0440\u0442",
-                "\u0431\u0438\u0437\u043d\u0435\u0441",
-                "\u043f\u0435\u0440\u0432\u044b\u0439 \u043a\u043b\u0430\u0441\u0441",
-                "\u043d\u0435 \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d",
-                "\u0431\u0435\u0437 \u043e\u0433\u0440\u0430\u043d\u0438\u0447\u0435\u043d\u0438\u0439",
-                "\u043b\u044e\u0431\u043e\u0439 \u0431\u044e\u0434\u0436\u0435\u0442",
-                "\u043f\u0440\u0435\u043c\u0438\u0443\u043c",
-                "\u043b\u044e\u043a\u0441",
-                "\u0434\u043e ",
-                "\u043e\u0442 ",
-                "\u043d\u0430 ",
-                "\u043e\u043a\u043e\u043b\u043e ",
-                "₽",
-                "\u0440\u0443\u0431",
-            )
-        ) or bool(re.search(r"\b\d[\d\s]{3,}\b", lowered))
-
-    @staticmethod
-    def _has_dates_hint(text: str) -> bool:
-        lowered = text.lower()
-        return any(
-            keyword in lowered
-            for keyword in (
-                "\u044f\u043d\u0432\u0430\u0440",
-                "\u0444\u0435\u0432\u0440\u0430\u043b",
-                "\u043c\u0430\u0440\u0442",
-                "\u0430\u043f\u0440\u0435\u043b",
-                "\u043c\u0430\u0439",
-                "\u0438\u044e\u043d",
-                "\u0438\u044e\u043b",
-                "\u0430\u0432\u0433\u0443\u0441\u0442",
-                "\u0441\u0435\u043d\u0442\u044f\u0431\u0440",
-                "\u043e\u043a\u0442\u044f\u0431\u0440",
-                "\u043d\u043e\u044f\u0431\u0440",
-                "\u0434\u0435\u043a\u0430\u0431\u0440",
-            )
-        ) or bool(re.search(r"\b\d{1,2}\s*(?:-|\u2013|\u2014|\u0434\u043e)\s*\d{1,2}\b", text))
-    def _merge_edit_request(self, trip: dict, edit_text: str):
-        current = self._request_from_trip_row(trip)
-        destination = self.planner._extract_destination(edit_text) or str(current["destination"])
-        origin = self.planner._extract_origin(edit_text) or str(current["origin"])
-        days_count = self.planner._extract_days_count(edit_text) if self._has_days_hint(edit_text) else int(current["days_count"])
-        dates_text = self.planner._extract_dates(edit_text) if self._has_dates_hint(edit_text) else str(current["dates_text"])
-        budget_text = self.planner._extract_budget(edit_text) if self._has_budget_hint(edit_text) else str(current["budget_text"])
-        interests = self.planner._extract_interests(edit_text)
-        interests_text = ", ".join(interests) if interests else str(current["interests_text"])
-        source_prompt = f"{current['source_prompt']}\n\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435: {edit_text}".strip()
-        return self.planner.build_request_from_fields(
-            title=f"{destination} \u2022 {days_count} \u0434\u043d. \u2022 {int(current['group_size'])} \u0447\u0435\u043b.",
-            destination=destination,
-            origin=origin,
-            dates_text=dates_text,
-            days_count=days_count,
-            group_size=int(current["group_size"]),
-            budget_text=budget_text,
-            interests_text=interests_text,
-            notes=str(current["notes"]),
-            source_prompt=source_prompt,
-            language_code=self._chat_language(int(trip.get("chat_id") or 0)),
-        )
-    def _build_trip_payload(self, request, plan, *, notes_override: str | None = None) -> dict[str, object]:
-        notes = request.notes if notes_override is None else notes_override
-        return {
-            "title": request.title,
-            "destination": request.destination,
-            "origin": request.origin,
-            "dates_text": request.dates_text,
-            "days_count": request.days_count,
-            "group_size": request.group_size,
-            "budget_text": request.budget_text,
-            "interests_text": request.interests_text,
-            "notes": notes,
-            "source_prompt": request.source_prompt,
-            "context_text": plan.context_text,
-            "itinerary_text": plan.itinerary_text,
-            "logistics_text": plan.logistics_text,
-            "stay_text": plan.stay_text,
-            "alternatives_text": plan.alternatives_text,
-            "budget_breakdown_text": plan.budget_breakdown_text,
-            "budget_total_text": plan.budget_total_text,
-            "status": "active",
-        }
-
-    def _participant_lines(self, trip_id: int) -> list[str]:
-        participants = self.db.list_participants(trip_id)
-        going_names = [participant["full_name"] for participant in participants if participant["status"] == "going"]
-        if not going_names:
-            return ["\u2705 \u0415\u0434\u0443\u0442 (0): \u2014"]
-        return [f"\u2705 \u0415\u0434\u0443\u0442 ({len(going_names)}): {html.escape(', '.join(going_names))}"]
-    def _date_lines(self, trip_id: int) -> list[str]:
-        date_options = self.db.list_date_options(trip_id)
-        return [
-            f"• {html.escape(option['label'])} — <b>{option['votes']}</b> голос(ов)"
-            for option in date_options
-        ] or ["• пока не добавлены"]
-
-    @staticmethod
-    def _preview_multiline(text: str, *, max_blocks: int) -> str:
-        blocks = [block.strip() for block in (text or "").split("\n\n") if block.strip()]
-        if not blocks:
-            return "—"
-        return "\n\n".join(blocks[:max_blocks])
-
-    @staticmethod
-    def _escape_block(text: str) -> str:
-        return html.escape(text or "—")
-
-    def _build_brief_html(self, trip_id: int) -> str:
-        trip = self.db.get_trip_by_id(trip_id)
-        if not trip:
-            return "<b>Поездка не найдена.</b>"
-        lines = [
-            f"<b>🧾 {html.escape(trip['title'])}</b>",
-            f"📍 Направление: <b>{html.escape(trip['destination'] or 'не указано')}</b>",
-            f"🛫 Откуда: <b>{html.escape(trip['origin'] or 'не указано')}</b>",
-            f"📅 Даты: <b>{html.escape(trip['dates_text'] or 'не указаны')}</b>",
-            f"⏱ Длительность: <b>{int(trip['days_count'] or 0)} дн.</b>",
-            f"👥 Размер группы: <b>{int(trip['group_size'] or 0)} чел.</b>",
-            f"💸 Бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>",
-            f"🎯 Интересы: <b>{html.escape(trip['interests_text'] or 'не указаны')}</b>",
-        ]
-        if trip["source_prompt"]:
-            lines.append("")
-            lines.append("<b>Исходный запрос</b>")
-            lines.append(html.escape(trip["source_prompt"]))
-        return "\n".join(lines)
-
-    def _build_summary_html(self, trip_id: int) -> str:
-        trip = self.db.get_trip_by_id(trip_id)
-        if not trip:
-            return "<b>Поездка не найдена.</b>"
-
-        itinerary_preview = self._escape_block(self._preview_multiline(trip["itinerary_text"] or "", max_blocks=2))
-        stay_preview = self._escape_block(self._preview_multiline(trip["stay_text"] or "", max_blocks=1))
-        context_preview = self._escape_block(self._preview_multiline(trip["context_text"] or "", max_blocks=1))
-        notes_text = self._escape_block(trip["notes"] or "—")
-        weather_text = (trip["weather_text"] or "").strip()
-        weather_block = f"\n\n<b>Погода</b>\n{html.escape(weather_text)}" if weather_text else ""
-
-        return (
-            f"<b>🧭 {html.escape(trip['title'])}</b>\n"
-            f"📍 Направление: <b>{html.escape(trip['destination'] or 'не указано')}</b>\n"
-            f"🛫 Откуда: <b>{html.escape(trip['origin'] or 'не указано')}</b>\n"
-            f"📅 Даты: <b>{html.escape(trip['dates_text'] or 'не указаны')}</b> · <b>{int(trip['days_count'] or 0)} дн.</b>\n"
-            f"👥 Группа: <b>{int(trip['group_size'] or 0)} чел.</b>\n"
-            f"💸 Целевой бюджет: <b>{html.escape(trip['budget_text'] or 'не указан')}</b>\n"
-            f"🎯 Интересы: <b>{html.escape(trip['interests_text'] or 'не указаны')}</b>\n\n"
-            f"<b>Коротко о направлении</b>\n{context_preview}\n\n"
-            f"<b>Черновик маршрута</b>\n{itinerary_preview}\n\n"
-            f"<b>Где жить</b>\n{stay_preview}\n\n"
-            f"<b>Ориентир по бюджету</b>\n{html.escape(trip['budget_total_text'] or 'не рассчитан')}\n\n"
-            f"<b>Участники</b>\n"
-            + "\n".join(self._participant_lines(trip_id))
-            + "\n\n"
-            + "<b>Варианты дат</b>\n"
-            + "\n".join(self._date_lines(trip_id))
-            + "\n\n"
-            + f"<b>Заметки / открытые вопросы</b>\n{notes_text}"
-            + weather_block
-        )
-
-    def _refresh_weather_for_trip(self, trip_id: int) -> None:
-        trip = self.db.get_trip_by_id(trip_id)
-        if not trip:
-            return
-        destination = trip["destination"] or ""
-        dates_text = trip["dates_text"] or ""
-        try:
-            summary = fetch_weather_summary(destination, dates_text)
-        except WeatherError:
-            summary = None
-        if summary:
-            self.db.update_trip_fields(
-                trip_id,
-                {
-                    "weather_text": summary,
-                    "weather_updated_at": datetime.now(UTC).isoformat(timespec="seconds"),
-                },
-            )
-
-    def _rebuild_trip(self, trip_id: int) -> None:
-        trip = self.db.get_trip_by_id(trip_id)
-        if not trip:
-            return
-        request = self.planner.build_request_from_fields(
-            **self._request_from_trip_row(trip),
-            language_code=self._chat_language(int(trip["chat_id"])),
-        )
-        plan = self.planner.generate_plan(request)
-        self.db.update_trip_fields(trip_id, self._build_trip_payload(request, plan, notes_override=trip["notes"] or ""))
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
@@ -808,13 +563,12 @@ class BotHandlers:
         message = update.effective_message
         if not chat or not message:
             return
-        if not context.args:
-            await message.reply_text("Использование: /select_trip 12")
-            return
-        try:
-            trip_id = int(context.args[0])
-        except ValueError:
-            await message.reply_text("Нужен числовой ID поездки. Посмотрите его через /trips.")
+        trip_id = await self._parse_required_trip_id_arg(
+            message,
+            context.args,
+            usage_text="Использование: /select_trip 12",
+        )
+        if trip_id is None:
             return
 
         activated = self.db.activate_trip(chat.id, trip_id)
@@ -837,13 +591,17 @@ class BotHandlers:
         self._remember_chat_member(update)
         chat = update.effective_chat
         lang = self._chat_language(chat.id if chat else None)
+        pending_key = self._scoped_chat_state_key(update, "pending_plan_prompt")
+        followup_key = self._scoped_chat_state_key(update, "plan_followup")
         if not context.args:
-            context.chat_data["pending_plan_prompt"] = True
+            context.chat_data[pending_key] = True
+            context.chat_data.pop(followup_key, None)
             await update.effective_message.reply_text(self._build_plan_prompt_text(lang))
             return
 
         raw_text = " ".join(context.args).strip()
-        context.chat_data.pop("pending_plan_prompt", None)
+        context.chat_data.pop(pending_key, None)
+        context.chat_data.pop(followup_key, None)
         await self._create_trip_from_text(update, raw_text, context)
 
     async def new_trip_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -964,7 +722,7 @@ class BotHandlers:
                 budget_text=draft.get("budget_text", "Бизнес"),
                 interests_text=draft.get("interests_text", "город, еда"),
                 notes=notes,
-                source_prompt=f"Новый бриф: {draft.get('destination', '')}, {draft.get('days_count', 3)} дн.",
+                source_prompt=truncate_source_prompt(f"Новый бриф: {draft.get('destination', '')}, {draft.get('days_count', 3)} дн."),
                 language_code=lang,
             )
         except ValueError as exc:
@@ -1133,7 +891,8 @@ class BotHandlers:
     async def handle_trip_edit_input(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if await self._continue_plan_followup(update, context):
             return
-        pending_plan = context.chat_data.pop("pending_plan_prompt", False)
+        pending_key = self._scoped_chat_state_key(update, "pending_plan_prompt")
+        pending_plan = context.chat_data.pop(pending_key, False)
         if pending_plan:
             await self._create_trip_from_text(update, update.effective_message.text if update.effective_message else "", context)
             return
@@ -1156,12 +915,12 @@ class BotHandlers:
         )
         trip = self.db.get_trip_by_id(int(trip_id))
         if not trip or trip["status"] != "active":
-            await message.reply_text("\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439 \u043f\u043b\u0430\u043d \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d.")
+            await message.reply_text("Активный план для изменения не найден.")
             return
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         edit_text = (message.text or "").strip()
         if not edit_text:
-            await message.reply_text("\u041d\u0443\u0436\u0435\u043d \u0442\u0435\u043a\u0441\u0442 \u0437\u0430\u043f\u0440\u043e\u0441\u0430 \u0434\u043b\u044f \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
+            await message.reply_text("Нужен текст запроса для изменения плана.")
             return
         try:
             request = self.service._merge_edit_request(trip, edit_text)
@@ -1184,7 +943,7 @@ class BotHandlers:
             payload,
         )
         await self.service._refresh_weather_for_trip(int(trip_id))
-        await message.reply_text("\u041f\u043b\u0430\u043d \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d.")
+        await message.reply_text("План обновлён.")
         await message.reply_text(
             self.formatter._build_summary_html(int(trip_id)),
             parse_mode=ParseMode.HTML,
@@ -1211,7 +970,8 @@ class BotHandlers:
         self._remember_chat_member(update)
         if await self._continue_plan_followup(update, context):
             return
-        pending_plan = context.chat_data.pop("pending_plan_prompt", False)
+        pending_key = self._scoped_chat_state_key(update, "pending_plan_prompt")
+        pending_plan = context.chat_data.pop(pending_key, False)
         if pending_plan:
             await self._create_trip_from_text(update, message.text or "", context)
             return
@@ -1287,14 +1047,32 @@ class BotHandlers:
                 existing_needs = set(deserialize_needs(active_trip.get("detected_needs")))
                 if set(signal.detected_needs) - existing_needs:
                     previous_prompt = (active_trip.get("source_prompt") or "").strip()
-                    updates["source_prompt"] = f"{previous_prompt}\n{signal.raw_text}".strip()[-3000:]
+                    updates["source_prompt"] = truncate_source_prompt(
+                        f"{previous_prompt}\n{signal.raw_text}"
+                    )
                 if updates:
-                    self.db.update_trip_fields(int(active_trip["id"]), updates)
-                    await self.service._rebuild_trip(int(active_trip["id"]))
-                    if "dates_text" in updates:
-                        await self.service._refresh_weather_for_trip(int(active_trip["id"]))
+                    trip_id = int(active_trip["id"])
+                    self.db.update_trip_fields(trip_id, updates)
+                    try:
+                        await self.service._rebuild_trip(trip_id)
+                        if "dates_text" in updates:
+                            await self.service._refresh_weather_for_trip(trip_id)
+                    except Exception:
+                        logger.exception(
+                            "Group trip auto-update failed: chat_id=%s message_id=%s user_id=%s trip_id=%s updates=%s text=%r",
+                            chat.id,
+                            getattr(message, "message_id", None),
+                            user.id if user else None,
+                            trip_id,
+                            sorted(updates.keys()),
+                            text,
+                        )
+                        await message.reply_text(
+                            "Не удалось обновить поездку автоматически. Попробуйте повторить сообщение чуть позже."
+                        )
+                        return
                     if await self._should_send_group_reply(context, "last_auto_update_reply", cooldown_seconds=420):
-                        refreshed_trip = self.db.get_trip_by_id(int(active_trip["id"]))
+                        refreshed_trip = self.db.get_trip_by_id(trip_id)
                         if refreshed_trip:
                             await message.reply_text(
                                 self.formatter.build_group_autodraft_reply(refreshed_trip),
@@ -1306,11 +1084,26 @@ class BotHandlers:
         if not await self._should_send_group_reply(context, "last_auto_reply", cooldown_seconds=420):
             return
 
-        trip_id = await self.service.auto_draft_from_signal(
-            chat_id=chat.id,
-            created_by=user.id if user else None,
-            signal=signal,
-        )
+        try:
+            trip_id = await self.service.auto_draft_from_signal(
+                chat_id=chat.id,
+                created_by=user.id if user else None,
+                signal=signal,
+            )
+        except Exception:
+            logger.exception(
+                "Group auto-draft failed: chat_id=%s message_id=%s user_id=%s destination=%s",
+                chat.id,
+                getattr(message, "message_id", None),
+                user.id if user else None,
+                signal.destination,
+            )
+            if await self._should_send_group_reply(context, "last_auto_draft_error_reply", cooldown_seconds=600):
+                await message.reply_text(
+                    "Не удалось создать поездку автоматически. Попробуйте начать через /plan или /newtrip."
+                )
+            return
+
         if trip_id:
             trip = self.db.get_trip_by_id(int(trip_id))
             if trip:
@@ -1330,12 +1123,12 @@ class BotHandlers:
             _, trip_id_raw, action = (query.data or "").split(":", 2)
             trip_id = int(trip_id_raw)
         except (ValueError, AttributeError):
-            await query.answer("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0440\u0430\u0441\u043f\u043e\u0437\u043d\u0430\u0442\u044c \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435.", show_alert=True)
+            await query.answer("Не удалось распознать действие.", show_alert=True)
             return
 
         trip = self.db.get_trip_by_id(trip_id)
         if not trip:
-            await query.answer("\u042d\u0442\u0430 \u043f\u043e\u0435\u0437\u0434\u043a\u0430 \u0443\u0436\u0435 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u043d\u0430.", show_alert=True)
+            await query.answer("Эта поездка уже недоступна.", show_alert=True)
             return
 
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
@@ -1424,7 +1217,7 @@ class BotHandlers:
                     return
 
             if trip["status"] != "active":
-                await query.answer("\u042d\u0442\u0430 \u043f\u043e\u0435\u0437\u0434\u043a\u0430 \u0443\u0436\u0435 \u043d\u0435\u0430\u043a\u0442\u0438\u0432\u043d\u0430.", show_alert=True)
+                await query.answer("Эта поездка уже неактивна.", show_alert=True)
                 return
 
             if action in {"going", "interested", "not_going"}:
@@ -1493,9 +1286,9 @@ class BotHandlers:
                 context.user_data["edit_trip_id"] = trip_id
                 if query.message:
                     await query.message.reply_text(
-                        "\u041d\u0430\u043f\u0438\u0448\u0438\u0442\u0435 \u043e\u0434\u043d\u0438\u043c \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u0435\u043c, \u0447\u0442\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c. \u041d\u0430\u043f\u0440\u0438\u043c\u0435\u0440: \u00ab\u0441\u0434\u0435\u043b\u0430\u0439 4 \u0434\u043d\u044f, \u0431\u044e\u0434\u0436\u0435\u0442 \u0441\u0440\u0435\u0434\u043d\u0438\u0439, \u0434\u043e\u0431\u0430\u0432\u044c \u043c\u043e\u0440\u0435 \u0438 \u0435\u0434\u0443\u00bb."
+                        "Напишите одним сообщением, что изменить. Например: «сделай 4 дня, бюджет средний, добавь море и еду»."
                     )
-                await query.answer("\u0416\u0434\u0443 \u0442\u0435\u043a\u0441\u0442 \u0434\u043b\u044f \u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f \u043f\u043b\u0430\u043d\u0430.")
+                await query.answer("Жду текст для обновления плана.")
                 self._log_trip_action(
                     "success",
                     action=action,
@@ -1506,7 +1299,7 @@ class BotHandlers:
                 )
                 return
 
-            await query.answer("\u041d\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043d\u043e\u0435 \u0434\u0435\u0439\u0441\u0442\u0432\u0438\u0435.", show_alert=True)
+            await query.answer("Неизвестное действие.", show_alert=True)
             self._log_trip_action(
                 "unknown_action",
                 action=action,
@@ -1712,13 +1505,12 @@ class BotHandlers:
         message = update.effective_message
         if not chat or not message:
             return
-        if not context.args:
-            await message.reply_text("Использование: /delete_trip 12")
-            return
-        try:
-            trip_id = int(context.args[0])
-        except ValueError:
-            await message.reply_text("Нужен числовой ID поездки. Посмотрите его через /trips.")
+        trip_id = await self._parse_required_trip_id_arg(
+            message,
+            context.args,
+            usage_text="Использование: /delete_trip 12",
+        )
+        if trip_id is None:
             return
 
         deleted = self.db.delete_trip(chat.id, trip_id)
@@ -1741,15 +1533,33 @@ class BotHandlers:
             await message.reply_text("Не удалось удалить поездку. Проверьте ID через /trips.")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if isinstance(context.error, Conflict):
+            logger.warning(
+                "Telegram polling conflict detected. Another bot instance is already consuming updates; stopping this instance."
+            )
+            context.application.stop_running()
+            return
+
+        error = context.error
+        error_type = type(error).__name__ if error else "Unknown"
+        
         if isinstance(update, Update):
             callback_data = update.callback_query.data if update.callback_query else None
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            user_id = update.effective_user.id if update.effective_user else None
+            
             logger.error(
-                "update_error chat_id=%s user_id=%s callback_data=%s",
-                update.effective_chat.id if update.effective_chat else None,
-                update.effective_user.id if update.effective_user else None,
+                "update_error chat_id=%s user_id=%s callback_data=%s error_type=%s",
+                chat_id,
+                user_id,
                 callback_data,
+                error_type,
             )
-        logger.exception("Unhandled error while processing update", exc_info=context.error)
+        else:
+            logger.error("update_error update_type=%s error_type=%s", type(update).__name__, error_type)
+            
+        logger.exception("Unhandled error while processing update", exc_info=error)
+        
         if isinstance(update, Update) and update.effective_message:
             try:
                 await update.effective_message.reply_text(

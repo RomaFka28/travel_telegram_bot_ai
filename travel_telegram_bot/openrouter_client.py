@@ -2,10 +2,9 @@
 
 import json
 import re
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 
+from http_utils import safe_http_post
 from llm_provider_pool import LLMProvider
 from travel_planner import BudgetInterpretation, TripPlan, TripRequest, TravelPlanner
 
@@ -13,7 +12,7 @@ from travel_planner import BudgetInterpretation, TripPlan, TripRequest, TravelPl
 @dataclass(slots=True)
 class OpenRouterConfig:
     api_key: str
-    model: str = "stepfun/step-3.5-flash:free"
+    model: str = "qwen/qwen3.6-plus:free"
     base_url: str = "https://openrouter.ai/api/v1/chat/completions"
     timeout_s: int = 60
     use_web_search: bool = True
@@ -25,7 +24,8 @@ class OpenRouterError(RuntimeError):
 
 
 def _supports_openrouter_web_search(config: OpenRouterConfig) -> bool:
-    return "openrouter.ai" in config.base_url.lower()
+    """Qwen не поддерживает web search плагин на OpenRouter."""
+    return "openrouter.ai" in config.base_url.lower() and "qwen" not in config.model.lower()
 
 
 def _build_request_headers(api_key: str) -> dict[str, str]:
@@ -202,21 +202,17 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
 
     payload = build_trip_plan_payload(config, request)
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url=config.base_url,
-        data=data,
-        method="POST",
-        headers=_build_request_headers(config.api_key),
-    )
-
+    
     try:
-        with urllib.request.urlopen(req, timeout=config.timeout_s) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-        raise OpenRouterError(f"OpenRouter HTTP {exc.code}: {body or exc.reason}") from exc
-    except urllib.error.URLError as exc:
-        raise OpenRouterError(f"OpenRouter connection error: {exc}") from exc
+        raw = safe_http_post(
+            config.base_url,
+            data=data,
+            headers=_build_request_headers(config.api_key),
+            max_retries=3,
+            timeout=config.timeout_s,
+        )
+    except Exception as exc:
+        raise OpenRouterError(f"OpenRouter request failed: {exc}") from exc
 
     try:
         parsed = json.loads(raw)
@@ -245,21 +241,17 @@ def classify_budget_text(config: OpenRouterConfig, text: str) -> BudgetInterpret
 
     payload = build_budget_interpretation_payload(config, text)
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url=config.base_url,
-        data=data,
-        method="POST",
-        headers=_build_request_headers(config.api_key),
-    )
-
+    
     try:
-        with urllib.request.urlopen(req, timeout=config.timeout_s) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace") if exc.fp else ""
-        raise OpenRouterError(f"OpenRouter HTTP {exc.code}: {body or exc.reason}") from exc
-    except urllib.error.URLError as exc:
-        raise OpenRouterError(f"OpenRouter connection error: {exc}") from exc
+        raw = safe_http_post(
+            config.base_url,
+            data=data,
+            headers=_build_request_headers(config.api_key),
+            max_retries=3,
+            timeout=config.timeout_s,
+        )
+    except Exception as exc:
+        raise OpenRouterError(f"OpenRouter request failed: {exc}") from exc
 
     try:
         parsed = json.loads(raw)

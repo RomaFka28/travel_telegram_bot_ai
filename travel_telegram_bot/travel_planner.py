@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Iterable
 
 from travel_locale import default_currency_for_country, is_ru_or_cis_country, resolve_place_country
-from value_normalization import normalized_search_value
+from value_normalization import normalized_search_value, truncate_source_prompt
 
 RUS_MONTH_WORDS = [
     "январ", "феврал", "март", "апрел", "ма", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр",
@@ -584,7 +584,7 @@ class TravelPlanner:
             budget_text=budget_text,
             interests=interests,
             notes=cleaned,
-            source_prompt=cleaned,
+            source_prompt=truncate_source_prompt(cleaned),
             language_code="en" if language_code == "en" else "ru",
         )
 
@@ -618,7 +618,7 @@ class TravelPlanner:
             budget_text=normalized_search_value(budget_text) or "бизнес",
             interests=interests,
             notes=(notes or "").strip(),
-            source_prompt=(source_prompt or notes or f"Поездка в {destination_clean}").strip(),
+            source_prompt=truncate_source_prompt(source_prompt or notes or f"Поездка в {destination_clean}"),
             language_code="en" if language_code == "en" else "ru",
         )
 

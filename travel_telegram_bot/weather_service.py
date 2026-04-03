@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import re
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass
 from datetime import date, timedelta
+
+from date_utils import parse_dates_range
+from http_utils import safe_http_get
 
 
 class WeatherError(RuntimeError):
@@ -22,23 +23,6 @@ class GeoResult:
     timezone: str | None
 
 
-MONTHS_RU: dict[str, int] = {
-    "январ": 1,
-    "феврал": 2,
-    "март": 3,
-    "апрел": 4,
-    "мая": 5,
-    "май": 5,
-    "июн": 6,
-    "июл": 7,
-    "август": 8,
-    "сентябр": 9,
-    "октябр": 10,
-    "ноябр": 11,
-    "декабр": 12,
-}
-
-
 def geocode_city(name: str) -> GeoResult | None:
     name = (name or "").strip()
     if not name:
@@ -51,12 +35,12 @@ def geocode_city(name: str) -> GeoResult | None:
     }
     url = "https://geocoding-api.open-meteo.com/v1/search?" + urllib.parse.urlencode(params)
     try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError as exc:
+        raw = safe_http_get(url, max_retries=2, timeout=20)
+        raw_str = raw.decode("utf-8", errors="replace")
+    except Exception as exc:
         raise WeatherError(f"Geocoding error: {exc}") from exc
 
-    payload = json.loads(raw)
+    payload = json.loads(raw_str)
     results = payload.get("results") or []
     if not results:
         return None
@@ -70,56 +54,12 @@ def geocode_city(name: str) -> GeoResult | None:
     )
 
 
-def _parse_dates_range(dates_text: str) -> tuple[date, date] | None:
-    """
-    Best-effort parser for strings like:
-    - "12–16 июня"
-    - "12-16 июня"
-    - "12 июня"
-    Returns a date range in the current year.
-    """
-    text = (dates_text or "").strip().lower()
-    if not text or text == "не указаны":
-        return None
-
-    match = re.search(
-        r"\b(\d{1,2})\s*(?:-|–|—|до)?\s*(\d{0,2})\s*([а-яё]+)",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return None
-
-    start_day = int(match.group(1))
-    end_raw = match.group(2).strip()
-    end_day = int(end_raw) if end_raw else start_day
-    month_word = match.group(3)
-
-    month = None
-    for key, value in MONTHS_RU.items():
-        if key in month_word:
-            month = value
-            break
-    if not month:
-        return None
-
-    year = date.today().year
-    try:
-        start = date(year, month, start_day)
-        end = date(year, month, end_day)
-    except ValueError:
-        return None
-    if end < start:
-        start, end = end, start
-    return start, end
-
-
 def fetch_weather_summary(destination: str, dates_text: str) -> str | None:
     """
     Returns a short Russian weather block for the trip dates.
     Uses Open-Meteo (no API key). Forecast availability is limited (typically ~16 days).
     """
-    dates = _parse_dates_range(dates_text)
+    dates = parse_dates_range(dates_text)
     if not dates:
         return None
 
@@ -155,12 +95,12 @@ def fetch_weather_summary(destination: str, dates_text: str) -> str | None:
     url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
 
     try:
-        with urllib.request.urlopen(url, timeout=20) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.URLError as exc:
+        raw = safe_http_get(url, max_retries=2, timeout=20)
+        raw_str = raw.decode("utf-8", errors="replace")
+    except Exception as exc:
         raise WeatherError(f"Forecast error: {exc}") from exc
 
-    payload = json.loads(raw)
+    payload = json.loads(raw_str)
     daily = payload.get("daily") or {}
     days = daily.get("time") or []
     tmax = daily.get("temperature_2m_max") or []

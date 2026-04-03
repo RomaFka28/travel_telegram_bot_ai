@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from queue import Queue
+from threading import Lock
+from typing import Any, Generator
 
 import psycopg
 from psycopg.rows import dict_row
+
+from migrations import create_migration_manager
 
 
 TRIP_COLUMNS: dict[str, str] = {
@@ -91,14 +96,23 @@ EDITABLE_TRIP_FIELDS = {
 
 
 class Database:
-    def __init__(self, dsn: str) -> None:
+    def __init__(self, dsn: str, *, pool_size: int = 5) -> None:
         self.dsn = dsn
         self.is_postgres = dsn.startswith(("postgres://", "postgresql://"))
-
+        self._pool_size = pool_size
+        
+        # SQLite connection pool
+        self._sqlite_pool: Queue[sqlite3.Connection] | None = None
+        self._sqlite_pool_lock = Lock()
+        
+        # Migration manager
+        self._migrations = create_migration_manager()
+        
         if not self.is_postgres:
             db_path = self._normalize_sqlite_path(dsn)
             self.dsn = db_path
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+            self._init_sqlite_pool()
 
     @staticmethod
     def _normalize_sqlite_path(dsn: str) -> str:
@@ -106,20 +120,74 @@ class Database:
             return dsn.removeprefix("sqlite:///")
         return dsn
 
-    def _connect(self):
-        if self.is_postgres:
-            return psycopg.connect(self.dsn, row_factory=dict_row)
-
+    def _init_sqlite_pool(self) -> None:
+        """Инициализирует пул соединений SQLite."""
+        self._sqlite_pool = Queue(maxsize=self._pool_size)
+        # Предварительно создаём соединения
+        for _ in range(self._pool_size):
+            conn = self._create_sqlite_connection()
+            self._sqlite_pool.put(conn)
+    
+    def _create_sqlite_connection(self) -> sqlite3.Connection:
+        """Создаёт новое SQLite соединение."""
         connection = sqlite3.connect(self.dsn, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+    
+    @contextmanager
+    def _connect(self) -> Generator[sqlite3.Connection | psycopg.Connection, None, None]:
+        """
+        Получает соединение из пула (SQLite) или создаёт новое (PostgreSQL).
+        
+        Для SQLite: использует пул соединений с автоматическим возвратом и коммитом.
+        Для PostgreSQL: создаёт новое соединение (psycopg сам управляет пулом на сервере).
+        """
+        if self.is_postgres:
+            conn = psycopg.connect(self.dsn, row_factory=dict_row)
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+        else:
+            conn = self._sqlite_pool.get() if self._sqlite_pool else self._create_sqlite_connection()
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                if self._sqlite_pool:
+                    self._sqlite_pool.put(conn)
+                else:
+                    conn.close()
 
     def init_db(self) -> None:
         if self.is_postgres:
             self._init_postgres()
-            return
-        self._init_sqlite()
+        else:
+            self._init_sqlite()
+        
+        # Применить миграции после инициализации схемы
+        self.run_migrations()
+    
+    def run_migrations(self, target_version: int | None = None) -> int:
+        """
+        Применяет все неприменённые миграции.
+        
+        Returns:
+            Количество применённых миграций
+        """
+        return self._migrations.migrate(
+            get_connection=self._connect,
+            is_postgres=self.is_postgres,
+            target_version=target_version,
+        )
 
     def _init_sqlite(self) -> None:
         with self._connect() as conn:
