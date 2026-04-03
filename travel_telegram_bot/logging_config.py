@@ -56,16 +56,15 @@ class ErrorReportFormatter(logging.Formatter):
     
     def format(self, record: logging.LogRecord) -> str:
         base_fmt = "[{asctime}] {levelname:<7} {name} — {message}"
-        if record.exc_text:
-            return f"{base_fmt}\n{{exc_text}}"
-        return base_fmt
-        
         formatter = logging.Formatter(
             base_fmt,
             datefmt="%Y-%m-%d %H:%M:%S",
             style="{",
         )
-        return formatter.format(record)
+        result = formatter.format(record)
+        if record.exc_text:
+            result = f"{result}\n{record.exc_text}"
+        return result
 
 
 def setup_logging(

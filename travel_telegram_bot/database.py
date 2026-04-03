@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from threading import Lock
 from typing import Any, Generator
 
@@ -154,7 +154,16 @@ class Database:
             finally:
                 conn.close()
         else:
-            conn = self._sqlite_pool.get() if self._sqlite_pool else self._create_sqlite_connection()
+            # Получаем соединение из пула с таймаутом 30 секунд
+            # Если пул пуст и таймаут истёк — создаём временное соединение
+            if self._sqlite_pool:
+                try:
+                    conn = self._sqlite_pool.get(timeout=30)
+                except Empty:
+                    # Пул заблокирован — создаём временное соединение
+                    conn = self._create_sqlite_connection()
+            else:
+                conn = self._create_sqlite_connection()
             try:
                 yield conn
                 conn.commit()
@@ -574,12 +583,21 @@ class Database:
         placeholders = ", ".join(["?"] * len(fields))
         sql = f"INSERT INTO trips({', '.join(fields)}) VALUES ({placeholders})"
         with self._connect() as conn:
-            conn.execute(
-                "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND status = 'active'",
-                (chat_id,),
-            )
-            cursor = conn.execute(sql, params)
-            return int(cursor.lastrowid)
+            # BEGIN IMMEDIATE блокирует базу на запись, предотвращая race condition
+            # при конкурентном создании поездок для одного чата
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.execute(
+                    "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND status = 'active'",
+                    (chat_id,),
+                )
+                cursor = conn.execute(sql, params)
+                trip_id = int(cursor.lastrowid)
+                conn.commit()
+                return trip_id
+            except Exception:
+                conn.rollback()
+                raise
 
     def archive_active_trip(self, chat_id: int) -> bool:
         if self.is_postgres:

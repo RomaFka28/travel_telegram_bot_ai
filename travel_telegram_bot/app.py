@@ -208,5 +208,5 @@ if __name__ == "__main__":
     try:
         application.run_polling(allowed_updates=None, drop_pending_updates=True)
     except Exception as e:
-        logger.critical(f"Bot crashed: {e.__class__.__name__}: {e}", exc_info=True)
+        logger.critical("Bot crashed: %s: %s", e.__class__.__name__, e, exc_info=True)
         raise

@@ -32,6 +32,7 @@ from database import Database
 from housing_search import HousingSearchProvider
 from i18n import tr
 from llm_travel_planner import LLMTravelPlanner
+from rate_limiter import get_llm_limiter
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from travel_result_models import deserialize_needs
@@ -590,7 +591,18 @@ class BotHandlers:
     async def plan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
         chat = update.effective_chat
+        user = update.effective_user
         lang = self._chat_language(chat.id if chat else None)
+        
+        # Rate limiting для LLM-запросов
+        limiter = get_llm_limiter()
+        user_key = f"plan:{user.id}:{chat.id}" if user and chat else f"plan:{chat.id if chat else 0}"
+        if not limiter.is_allowed(user_key):
+            await update.effective_message.reply_text(
+                tr(lang, "plan_rate_limited", default="Слишком много запросов. Подождите минуту и попробуйте снова.")
+            )
+            return
+        
         pending_key = self._scoped_chat_state_key(update, "pending_plan_prompt")
         followup_key = self._scoped_chat_state_key(update, "plan_followup")
         if not context.args:
@@ -605,6 +617,19 @@ class BotHandlers:
         await self._create_trip_from_text(update, raw_text, context)
 
     async def new_trip_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+        user = update.effective_user
+        chat = update.effective_chat
+        
+        # Rate limiting для создания поездок
+        limiter = get_llm_limiter()
+        user_key = f"newtrip:{user.id}:{chat.id}" if user and chat else f"newtrip:{chat.id if chat else 0}"
+        if not limiter.is_allowed(user_key):
+            lang = self._chat_language(chat.id if chat else None)
+            await update.effective_message.reply_text(
+                tr(lang, "newtrip_rate_limited", default="Слишком много запросов. Подождите минуту и попробуйте снова.")
+            )
+            return ConversationHandler.END
+        
         context.user_data["trip_draft"] = {}
         self._remember_chat_member(update)
         lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)

@@ -38,9 +38,10 @@ def truncate_source_prompt(value: str, max_length: int = SOURCE_PROMPT_MAX_LENGT
     """
     Обрезает source_prompt до безопасного размера.
     Сохраняет последние max_length символов, чтобы контекст оставался актуальным.
+    Корректно обрабатывает multi-byte Unicode-символы.
     """
     text = (value or "").strip()
     if len(text) <= max_length:
         return text
-    # Берём хвост, чтобы сохранить самый свежий контекст
+    # Берём хвост — slicing по симвоалам Unicode-safe в Python
     return text[-max_length:]

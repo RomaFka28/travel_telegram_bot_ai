@@ -1,12 +1,15 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass, field
+import logging
 import math
 import re
 from threading import Lock
 
 from travel_links import CATEGORY_KEYWORDS, detect_link_needs
 from travel_planner import TravelPlanner
+
+logger = logging.getLogger(__name__)
 
 TRAVEL_TRIGGERS = [
     "поедем", "поехали", "съездим", "путешестви", "отдохнуть",
@@ -92,36 +95,36 @@ class GroupChatAnalyzer:
 
         try:
             destination = self._planner._extract_destination(text)
-        except Exception:
-            pass
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug("Failed to extract destination: %s", e)
         try:
             origin = self._planner._extract_origin(text)
-        except Exception:
-            pass
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug("Failed to extract origin: %s", e)
         try:
             raw_dates = self._planner._extract_dates(text)
             dates_text = raw_dates if raw_dates != "не указаны" else None
-        except Exception:
-            pass
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug("Failed to extract dates: %s", e)
         try:
             parsed_days = self._planner._extract_days_count(text)
             days_count = parsed_days if parsed_days != 3 or self._has_explicit_days(text) else None
-        except Exception:
-            pass
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug("Failed to extract days: %s", e)
         try:
             parsed_group_size = self._planner._extract_group_size(text)
             group_size = parsed_group_size if self._has_explicit_group_size(text) else None
-        except Exception:
-            pass
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug("Failed to extract group size: %s", e)
         try:
             raw_budget = self._planner._extract_budget(text)
             budget_hint = raw_budget if raw_budget != "Бизнес" or self._has_explicit_budget(text) else None
-        except Exception:
-            pass
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug("Failed to extract budget: %s", e)
         try:
             interests = self._planner._extract_interests(text)
-        except Exception:
-            pass
+        except (ValueError, AttributeError, TypeError) as e:
+            logger.debug("Failed to extract interests: %s", e)
 
         has_intent = self._looks_like_trip_request(
             normalized,
