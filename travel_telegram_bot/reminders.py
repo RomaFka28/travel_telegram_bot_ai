@@ -124,14 +124,15 @@ async def schedule_trip_reminders(
     if start_date < today:
         return []
 
-    # Fetch weather for destination to include in reminders
+    # Fetch weather forecast for destination on arrival date
     weather_text = ""
-    try:
-        from services.weather import get_weather_for_city
-        weather_text = await get_weather_for_city(destination)
-    except Exception as e:
-        logger.debug("Weather fetch for reminders failed for %r: %s", destination, e)
-        weather_text = ""
+    if start_iso:
+        try:
+            from services.weather import get_forecast_for_city
+            weather_text = await get_forecast_for_city(destination, start_iso)
+        except Exception as e:
+            logger.debug("Forecast fetch for reminders failed for %r on %s: %s", destination, start_iso, e)
+            weather_text = ""
 
     scheduled = []
     for reminder_type, config in REMINDER_TYPES.items():

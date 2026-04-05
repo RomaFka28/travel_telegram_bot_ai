@@ -94,6 +94,45 @@ async def get_current_weather(lat: float, lon: float) -> dict[str, Any]:
         return resp.json()
 
 
+async def get_forecast_for_date(
+    lat: float, lon: float, target_date: str,
+) -> dict[str, Any] | None:
+    """
+    Получает прогноз погоды на конкретную дату (YYYY-MM-DD).
+
+    Open-Meteo отдаёт daily forecast до 16 дней вперёд.
+    Возвращает срез данных для нужного дня или None если дата вне диапазона.
+    """
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": "temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode,precipitation_sum,windspeed_10m_max",
+        "start_date": target_date,
+        "end_date": target_date,
+        "timezone": "auto",
+    }
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(WEATHER_URL, params=params)
+        resp.raise_for_status()
+        data = resp.json()
+
+    daily = data.get("daily", {})
+    times = daily.get("time", [])
+    if not times or times[0] != target_date:
+        return None
+
+    # Извлекаем данные первого (и единственного) дня
+    result: dict[str, Any] = {}
+    for key in daily:
+        if key == "time":
+            continue
+        values = daily[key]
+        if isinstance(values, list) and len(values) > 0:
+            result[key] = values[0]
+
+    return result if result else None
+
+
 def format_weather(city: str, data: dict[str, Any]) -> str:
     """
     Форматирует данные погоды в человекочитаемый текст на русском.
@@ -133,9 +172,54 @@ def format_weather(city: str, data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_forecast(city: str, forecast: dict[str, Any], target_date: str) -> str:
+    """
+    Форматирует прогноз погоды на дату в человекочитаемый текст.
+
+    Args:
+        city: название города
+        forecast: данные прогноза (max/min temp, weathercode, etc.)
+        target_date: дата в формате YYYY-MM-DD
+
+    Returns:
+        Строка с эмодзи и прогнозом.
+    """
+    if not forecast:
+        return ""
+
+    wmo_code = forecast.get("weathercode", -1)
+    emoji, desc = WMO_CODES.get(wmo_code, ("🌡", "Нет данных"))
+
+    t_max = forecast.get("temperature_2m_max")
+    t_min = forecast.get("temperature_2m_min")
+    feels_max = forecast.get("apparent_temperature_max")
+    precip = forecast.get("precipitation_sum")
+    wind_max = forecast.get("windspeed_10m_max")
+
+    # Форматируем дату для вывода
+    try:
+        from datetime import date as date_cls
+        d = date_cls.fromisoformat(target_date)
+        date_str = d.strftime("%d.%m.%Y")
+    except ValueError:
+        date_str = target_date
+
+    lines: list[str] = [f"📍 Прогноз на {date_str} — {city}"]
+    if t_max is not None and t_min is not None:
+        feels_part = f" (ощущается до {round(feels_max)}°C)" if feels_max is not None else ""
+        lines.append(f"🌡 {round(t_min)}°C … {round(t_max)}°C{feels_part}")
+    if precip is not None:
+        lines.append(f"🌧 Осадки: {precip} мм")
+    if wind_max is not None:
+        lines.append(f"💨 Ветер: до {round(wind_max)} км/ч")
+    lines.append(f"{emoji} {desc}")
+
+    return "\n".join(lines)
+
+
 async def get_weather_for_city(city: str) -> str:
     """
-    Orchestrator: город → текст погоды.
+    Orchestrator: город → текст погоды (текущая).
 
     На геодкодинге: «❌ Город не найден.»
     На HTTP ошибке: «❌ Сервис погоды недоступен.»
@@ -152,3 +236,28 @@ async def get_weather_for_city(city: str) -> str:
         return f"❌ Сервис погоды недоступен. Попробуйте позже."
 
     return format_weather(city, data)
+
+
+async def get_forecast_for_city(city: str, target_date: str) -> str:
+    """
+    Orchestrator: город + дата → прогноз погоды.
+
+    На геодкодинге: «❌ Город не найден.»
+    На HTTP ошибке: «❌ Сервис погоды недоступен.»
+    На отсутствии данных: «❌ Прогноз на <date> недоступен.»
+    """
+    coords = await geocode(city)
+    if not coords:
+        return f"❌ Город «{city}» не найден."
+
+    lat, lon = coords
+    try:
+        forecast = await get_forecast_for_date(lat, lon, target_date)
+    except (httpx.HTTPError, httpx.TimeoutException, ValueError) as e:
+        logger.warning("Forecast fetch failed for %r (%s,%s) on %s: %s", city, lat, lon, target_date, e)
+        return f"❌ Сервис погоды недоступен. Попробуйте позже."
+
+    if not forecast:
+        return f"❌ Прогноз на {target_date} для «{city}» недоступен (дальний срок)."
+
+    return format_forecast(city, forecast, target_date)
