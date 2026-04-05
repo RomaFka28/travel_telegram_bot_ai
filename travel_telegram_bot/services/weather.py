@@ -3,9 +3,9 @@
 
 Функции:
 - geocode — геокодирование города
-- get_current_weather — текущая погода по координатам
-- format_weather — человекочитаемый текст
-- get_weather_for_city — orchestrator: город → текст погоды
+- get_forecast_for_date — прогноз на конкретную дату
+- format_forecast — человекочитаемый текст прогноза
+- get_forecast_for_city — orchestrator: город + дата → прогноз
 """
 from __future__ import annotations
 
@@ -76,24 +76,6 @@ async def geocode(city: str) -> tuple[float, float] | None:
         return None
 
 
-async def get_current_weather(lat: float, lon: float) -> dict[str, Any]:
-    """
-    Получает текущую погоду по координатам через Open-Meteo forecast API.
-
-    Returns полный JSON ответа.
-    """
-    params = {
-        "latitude": lat,
-        "longitude": lon,
-        "current": "temperature_2m,apparent_temperature,weathercode,windspeed_10m,relative_humidity_2m,precipitation",
-        "timezone": "auto",
-    }
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(WEATHER_URL, params=params)
-        resp.raise_for_status()
-        return resp.json()
-
-
 async def get_forecast_for_date(
     lat: float, lon: float, target_date: str,
 ) -> dict[str, Any] | None:
@@ -131,45 +113,6 @@ async def get_forecast_for_date(
             result[key] = values[0]
 
     return result if result else None
-
-
-def format_weather(city: str, data: dict[str, Any]) -> str:
-    """
-    Форматирует данные погоды в человекочитаемый текст на русском.
-
-    Args:
-        city: название города
-        data: ответ Open-Meteo API
-
-    Returns:
-        Строка с эмодзи и данными о погоде.
-    """
-    current = data.get("current", {})
-    if not current:
-        return f"❌ Нет данных о погоде для {city}."
-
-    temp = current.get("temperature_2m")
-    feels = current.get("apparent_temperature")
-    wmo_code = current.get("weathercode", -1)
-    wind = current.get("windspeed_10m")
-    humidity = current.get("relative_humidity_2m")
-    precip = current.get("precipitation")
-
-    emoji, desc = WMO_CODES.get(wmo_code, ("🌡", "Неизвестно"))
-
-    lines: list[str] = [f"{emoji} {city}"]
-    if temp is not None:
-        feels_text = f" (ощущается как {round(feels)}°C)" if feels is not None else ""
-        lines.append(f"🌡 Температура: {round(temp)}°C{feels_text}")
-    if humidity is not None:
-        lines.append(f"💧 Влажность: {round(humidity)}%")
-    if wind is not None:
-        lines.append(f"💨 Ветер: {round(wind)} км/ч")
-    if precip is not None:
-        lines.append(f"🌧 Осадки: {precip} мм")
-    lines.append(desc)
-
-    return "\n".join(lines)
 
 
 def format_forecast(city: str, forecast: dict[str, Any], target_date: str) -> str:
@@ -215,27 +158,6 @@ def format_forecast(city: str, forecast: dict[str, Any], target_date: str) -> st
     lines.append(f"{emoji} {desc}")
 
     return "\n".join(lines)
-
-
-async def get_weather_for_city(city: str) -> str:
-    """
-    Orchestrator: город → текст погоды (текущая).
-
-    На геодкодинге: «❌ Город не найден.»
-    На HTTP ошибке: «❌ Сервис погоды недоступен.»
-    """
-    coords = await geocode(city)
-    if not coords:
-        return f"❌ Город «{city}» не найден."
-
-    lat, lon = coords
-    try:
-        data = await get_current_weather(lat, lon)
-    except (httpx.HTTPError, httpx.TimeoutException, ValueError) as e:
-        logger.warning("Weather fetch failed for %r (%s,%s): %s", city, lat, lon, e)
-        return f"❌ Сервис погоды недоступен. Попробуйте позже."
-
-    return format_weather(city, data)
 
 
 async def get_forecast_for_city(city: str, target_date: str) -> str:

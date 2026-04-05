@@ -90,14 +90,8 @@ class RateLimiter:
 
 # Глобальные rate limiters
 _llm_limiter = RateLimiter(max_calls=3, window_seconds=60)  # 3 запроса LLM в минуту
-_command_limiter = RateLimiter(max_calls=20, window_seconds=60)  # 20 команд в минуту
 
 
 def get_llm_limiter() -> RateLimiter:
     """Rate limiter для LLM-запросов (/plan, /newtrip)."""
     return _llm_limiter
-
-
-def get_command_limiter() -> RateLimiter:
-    """Rate limiter для обычных команд."""
-    return _command_limiter

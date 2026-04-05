@@ -74,11 +74,6 @@ def get_all_translations() -> dict[str, dict[str, str]]:
     return TRANSLATIONS
 
 
-def get_available_locales() -> list[str]:
-    """Возвращает список доступных локалей."""
-    return [f.stem for f in _locales_dir().glob("*.json") if f.is_file()]
-
-
 def get_language(value: str | None) -> str:
     """Нормализует код языка."""
     return "en" if (value or "").lower() == "en" else "ru"
@@ -117,25 +112,6 @@ def tr(language_code: str | None, key: str, **kwargs) -> str:
     if kwargs:
         return value.format(**kwargs)
     return value
-
-
-def add_translation(language_code: str, key: str, value: str) -> None:
-    """
-    Добавить или переопределить перевод программно.
-    Полезно для динамических переводов или исправлений.
-    
-    Args:
-        language_code: Код языка
-        key: Ключ перевода
-        value: Текст перевода
-    """
-    try:
-        locale = load_locale(language_code)
-    except (FileNotFoundError, json.JSONDecodeError):
-        _LOADED_LOCALES[language_code] = {}
-        locale = _LOADED_LOCALES[language_code]
-    
-    locale[key] = value
 
 
 # Загрузить переводы при импорте для обратной совместимости

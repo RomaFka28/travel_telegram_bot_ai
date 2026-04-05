@@ -192,16 +192,3 @@ class LLMTravelPlanner(TravelPlanner):
             logger.warning("Sync LLM generation failed, using heuristic fallback: %s", exc)
             metrics.increment("llm.plan_generation", tags={"mode": "heuristic_fallback"})
             return self.generate_plan_heuristic(request)
-
-    def generate_plan_with_fallback(self, request: TripRequest) -> tuple[TripPlan, bool, str | None]:
-        """
-        Returns: (plan, used_llm, error_message_if_any)
-        """
-        metrics = get_metrics()
-        try:
-            plan = self.generate_plan_llm(request)
-            metrics.increment("llm.plan_generation", tags={"mode": "llm"})
-            return plan, True, None
-        except OpenRouterError as exc:
-            metrics.increment("llm.plan_generation", tags={"mode": "heuristic_fallback"})
-            return self.generate_plan_heuristic(request), False, str(exc)
