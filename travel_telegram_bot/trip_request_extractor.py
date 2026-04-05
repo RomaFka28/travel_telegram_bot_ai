@@ -4,7 +4,32 @@ import logging
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+try:
+    from pydantic import BaseModel, ConfigDict, Field
+except ModuleNotFoundError:
+    class BaseModel:
+        """Minimal fallback when pydantic is unavailable in the local venv."""
+
+        def __init__(self, **data):
+            annotations = getattr(self.__class__, "__annotations__", {})
+            for name in annotations:
+                if name in data:
+                    value = data[name]
+                else:
+                    value = getattr(self.__class__, name, None)
+                setattr(self, name, value)
+
+        @classmethod
+        def model_validate(cls, data: dict[str, object]):
+            return cls(**data)
+
+    def ConfigDict(**kwargs):
+        return dict(kwargs)
+
+    def Field(*, default_factory=None, default=None):
+        if default_factory is not None:
+            return default_factory()
+        return default
 
 from llm_travel_planner import LLMTravelPlanner
 from openrouter_client import OpenRouterError
