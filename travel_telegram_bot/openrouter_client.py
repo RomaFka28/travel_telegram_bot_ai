@@ -196,6 +196,63 @@ def build_budget_interpretation_payload(config: OpenRouterConfig, text: str) -> 
     return payload
 
 
+def build_trip_request_extraction_payload(
+    config: OpenRouterConfig,
+    text: str,
+    *,
+    language_code: str = "ru",
+) -> dict:
+    if language_code == "en":
+        system = (
+            "You normalize informal travel requests for a Telegram bot. "
+            "Return only valid JSON with no markdown. "
+            "Use exactly these keys: destination, origin, dates_text, days_count, group_size, "
+            "budget_text, interests, needs, route_type, notes, missing_fields, is_actionable. "
+            "destination/origin/dates_text/budget_text/notes must be string or null. "
+            "days_count and group_size must be integer or null. "
+            "interests and needs must be arrays of strings. "
+            "route_type must be exactly one of: one_way, round_trip, unknown. "
+            "needs may contain only: tickets, housing, activities. "
+            "missing_fields may contain only: destination, origin, dates_text, route_type. "
+            "Do not invent housing unless the user explicitly asks for housing or hotel. "
+            "Preserve multiple interests when the user lists several things."
+        )
+    else:
+        system = (
+            "Ты нормализуешь неформальные запросы на поездку для Telegram-бота. "
+            "Верни только валидный JSON без markdown. "
+            "Используй ровно эти ключи: destination, origin, dates_text, days_count, group_size, "
+            "budget_text, interests, needs, route_type, notes, missing_fields, is_actionable. "
+            "destination/origin/dates_text/budget_text/notes должны быть строкой или null. "
+            "days_count и group_size должны быть целым числом или null. "
+            "interests и needs должны быть массивами строк. "
+            "route_type должен быть ровно одним из: one_way, round_trip, unknown. "
+            "needs может содержать только: tickets, housing, activities. "
+            "missing_fields может содержать только: destination, origin, dates_text, route_type. "
+            "Не добавляй housing, если пользователь явно не просил жильё. "
+            "Если пользователь перечисляет несколько интересов, сохрани их все."
+        )
+
+    user = (
+        "Normalize this travel request and infer only explicit or strongly implied details:\n"
+        f"{text}\n\n"
+        "Important:\n"
+        "1. If the user asks for a one-way ticket, set route_type=one_way.\n"
+        "2. If the user clearly asks for flights or tickets but omits origin, dates or route type, put them into missing_fields.\n"
+        "3. Do not fabricate destination, origin, dates, housing, or interests.\n"
+        "4. is_actionable should be true only when the request is ready for downstream trip creation."
+    )
+    return {
+        "model": config.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 450,
+    }
+
+
 def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPlan:
     if not config.api_key:
         raise OpenRouterError("OPENROUTER_API_KEY is missing.")
@@ -224,6 +281,33 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
     return _coerce_trip_plan(obj, request)
 
 
+def extract_trip_request(config: OpenRouterConfig, text: str, *, language_code: str = "ru") -> dict:
+    if not config.api_key:
+        raise OpenRouterError("OPENROUTER_API_KEY is missing.")
+
+    payload = build_trip_request_extraction_payload(config, text, language_code=language_code)
+    data = json.dumps(payload).encode("utf-8")
+
+    try:
+        raw = safe_http_post(
+            config.base_url,
+            data=data,
+            headers=_build_request_headers(config.api_key),
+            max_retries=3,
+            timeout=config.timeout_s,
+        )
+    except Exception as exc:
+        raise OpenRouterError(f"OpenRouter request failed: {exc}") from exc
+
+    try:
+        parsed = json.loads(raw)
+        content = parsed["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        raise OpenRouterError(f"Unexpected OpenRouter response: {raw[:5000]}") from exc
+
+    return _extract_json_object(content)
+
+
 def generate_trip_plan_with_provider(provider: LLMProvider, request: TripRequest) -> TripPlan:
     """Same as generate_trip_plan but uses LLMProvider instead of OpenRouterConfig."""
     config = OpenRouterConfig(
@@ -233,6 +317,21 @@ def generate_trip_plan_with_provider(provider: LLMProvider, request: TripRequest
         use_web_search=provider.use_web_search,
     )
     return generate_trip_plan(config, request)
+
+
+def extract_trip_request_with_provider(
+    provider: LLMProvider,
+    text: str,
+    *,
+    language_code: str = "ru",
+) -> dict:
+    config = OpenRouterConfig(
+        api_key=provider.api_key,
+        model=provider.model,
+        base_url=provider.base_url,
+        use_web_search=provider.use_web_search,
+    )
+    return extract_trip_request(config, text, language_code=language_code)
 
 
 def classify_budget_text(config: OpenRouterConfig, text: str) -> BudgetInterpretation:

@@ -6,7 +6,11 @@ import time
 
 from llm_provider_pool import LLMProviderPool
 from metrics import get_metrics
-from openrouter_client import OpenRouterError, generate_trip_plan_with_provider
+from openrouter_client import (
+    OpenRouterError,
+    extract_trip_request_with_provider,
+    generate_trip_plan_with_provider,
+)
 from travel_planner import BudgetInterpretation, TripPlan, TripRequest, TravelPlanner
 
 logger = logging.getLogger(__name__)
@@ -82,6 +86,84 @@ class LLMTravelPlanner(TravelPlanner):
             logger.warning("Async LLM generation failed, using heuristic fallback: %s", exc)
             metrics.increment("llm.plan_generation", tags={"mode": "heuristic_fallback"})
             return await asyncio.to_thread(self.generate_plan_heuristic, request)
+
+    def extract_trip_request(self, text: str, *, language_code: str = "ru") -> dict[str, object]:
+        providers = self._pool.all_providers()
+        last_error: Exception | None = None
+        metrics = get_metrics()
+
+        for provider in providers:
+            start = time.perf_counter()
+            try:
+                logger.info("Trying trip extraction provider: %s", provider.name)
+                result = extract_trip_request_with_provider(
+                    provider,
+                    text,
+                    language_code=language_code,
+                )
+                duration = time.perf_counter() - start
+                metrics.increment("llm.trip_extraction.success", tags={"provider": provider.name})
+                metrics.record_time("llm.trip_extraction.response_time", duration, tags={"provider": provider.name})
+                return result
+            except OpenRouterError as exc:
+                duration = time.perf_counter() - start
+                metrics.increment("llm.trip_extraction.failure", tags={"provider": provider.name})
+                metrics.record_time(
+                    "llm.trip_extraction.response_time",
+                    duration,
+                    tags={"provider": provider.name, "status": "error"},
+                )
+                logger.warning("Trip extraction provider %s failed: %s", provider.name, exc)
+                last_error = exc
+                continue
+
+        metrics.increment("llm.trip_extraction.all_providers_failed")
+        raise OpenRouterError(
+            f"All {len(providers)} trip extraction providers failed. Last error: {last_error}"
+        )
+
+    async def extract_trip_request_async(
+        self,
+        text: str,
+        *,
+        language_code: str = "ru",
+    ) -> dict[str, object]:
+        providers = self._pool.all_providers()
+        primary = await self._pool.get_next()
+        ordered = [primary] + [provider for provider in providers if provider.name != primary.name]
+        last_error: Exception | None = None
+        metrics = get_metrics()
+
+        for provider in ordered:
+            start = time.perf_counter()
+            try:
+                logger.info("Trying trip extraction provider (async): %s", provider.name)
+                result = await asyncio.to_thread(
+                    extract_trip_request_with_provider,
+                    provider,
+                    text,
+                    language_code=language_code,
+                )
+                duration = time.perf_counter() - start
+                metrics.increment("llm.trip_extraction.success", tags={"provider": provider.name})
+                metrics.record_time("llm.trip_extraction.response_time", duration, tags={"provider": provider.name})
+                return result
+            except OpenRouterError as exc:
+                duration = time.perf_counter() - start
+                metrics.increment("llm.trip_extraction.failure", tags={"provider": provider.name})
+                metrics.record_time(
+                    "llm.trip_extraction.response_time",
+                    duration,
+                    tags={"provider": provider.name, "status": "error"},
+                )
+                logger.warning("Trip extraction provider %s failed: %s", provider.name, exc)
+                last_error = exc
+                continue
+
+        metrics.increment("llm.trip_extraction.all_providers_failed")
+        raise OpenRouterError(
+            f"All {len(providers)} trip extraction providers failed. Last error: {last_error}"
+        )
 
     def interpret_budget_text(self, text: str) -> BudgetInterpretation:
         return self._interpret_budget_heuristic(text)

@@ -33,6 +33,7 @@ from housing_search import HousingSearchProvider
 from i18n import tr
 from llm_travel_planner import LLMTravelPlanner
 from rate_limiter import get_llm_limiter
+from trip_request_extractor import TripRequestExtraction, TripRequestExtractor
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from travel_result_models import deserialize_needs
@@ -60,6 +61,7 @@ class BotHandlers:
         service: TripService,
         housing_provider: HousingSearchProvider,
         flight_provider: TravelpayoutsFlightProvider | None = None,
+        request_extractor: TripRequestExtractor | None = None,
     ) -> None:
         self.db = database
         self.planner = planner
@@ -67,6 +69,7 @@ class BotHandlers:
         self.service = service
         self.housing_provider = housing_provider
         self.flight_provider = flight_provider
+        self.request_extractor = request_extractor or TripRequestExtractor(planner)
 
     @staticmethod
     def _display_name(update: Update) -> str:
@@ -200,18 +203,54 @@ class BotHandlers:
         triggers = ("вылет", "билет", "перелет", "перелёт", "рейс", "лететь", "one way", "round trip", "в одну сторону", "туда-обратно")
         return any(trigger in lowered for trigger in triggers)
 
-    def _build_plan_followup_state(self, request, raw_text: str) -> dict[str, object] | None:
-        if not self._needs_route_followup(raw_text):
+    @staticmethod
+    def _normalize_interest_phrase(value: str) -> str:
+        cleaned = re.sub(r"\s+", " ", (value or "").strip(" .,!?:;\"'«»")).lower()
+        aliases = {
+            "еду": "еда",
+            "еда": "еда",
+            "прогулки": "прогулки",
+            "прогулок": "прогулки",
+            "прогулка": "прогулки",
+            "гулять": "прогулки",
+        }
+        return aliases.get(cleaned, cleaned)
+
+    @classmethod
+    def _merge_explicit_interests(cls, raw_text: str, parsed_interests: list[str]) -> list[str]:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for interest in parsed_interests:
+            normalized = cls._normalize_interest_phrase(interest)
+            if normalized and normalized not in seen:
+                merged.append(normalized)
+                seen.add(normalized)
+
+        patterns = (
+            r"(?:интерес(?:ует|уют)\s+)([^.!?\n]+)",
+            r"(?:люблю|любим|нравится|нравятся)\s+([^.!?\n]+)",
+        )
+        for pattern in patterns:
+            for match in re.finditer(pattern, raw_text or "", flags=re.IGNORECASE):
+                chunk = match.group(1)
+                parts = re.split(r",|/|;|\s+\bи\b\s+", chunk, flags=re.IGNORECASE)
+                for part in parts:
+                    normalized = cls._normalize_interest_phrase(part)
+                    if not normalized or normalized in {"меня", "нас"} or normalized in seen:
+                        continue
+                    merged.append(normalized)
+                    seen.add(normalized)
+        return merged
+
+    def _build_plan_followup_state(
+        self,
+        extraction: TripRequestExtraction,
+        *,
+        source_prompt: str,
+    ) -> dict[str, object] | None:
+        if not extraction.missing_fields:
             return None
-        fields: list[str] = []
-        if request.origin == "не указано" and not self._has_explicit_origin(raw_text):
-            fields.append("origin")
-        if request.dates_text == "не указаны" and not self._has_explicit_dates(raw_text):
-            fields.append("dates_text")
-        if not self._has_explicit_route_type(raw_text):
-            fields.append("route_type")
-        if not fields:
-            return None
+        request = extraction.to_trip_request(self.planner, source_prompt=source_prompt)
         return {
             "title": request.title,
             "destination": request.destination,
@@ -224,19 +263,21 @@ class BotHandlers:
             "notes": request.notes,
             "source_prompt": request.source_prompt,
             "language_code": request.language_code,
-            "fields": fields,
+            "fields": list(extraction.missing_fields),
             "index": 0,
         }
 
     def _plan_followup_question(self, field: str, language_code: str) -> str:
         if language_code == "en":
             mapping = {
+                "destination": "What destination do you want to go to?",
                 "origin": "What city are you flying from?",
                 "dates_text": "What exact date or date range do you need?",
                 "route_type": "Do you need a one-way ticket or a round trip?",
             }
         else:
             mapping = {
+                "destination": "Куда хотите поехать?",
                 "origin": "Из какого города нужен вылет?",
                 "dates_text": "Какая точная дата или диапазон дат нужны?",
                 "route_type": "Нужен билет в одну сторону или туда-обратно?",
@@ -388,6 +429,25 @@ class BotHandlers:
         if not text:
             await message.reply_text("Need trip text. After /plan, send the description in the next message." if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en" else "Нужен текст поездки. После /plan отправьте описание следующим сообщением.")
             return False
+        language_code = self._chat_language(update.effective_chat.id if update.effective_chat else None)
+        extraction = await self.request_extractor.extract_async(
+            text,
+            language_code=language_code,
+            planner=self.planner,
+            allow_llm=True,
+        )
+        if not extraction.destination:
+            await message.reply_text(self._build_plan_prompt_text(language_code))
+            return False
+
+        followup_state = self._build_plan_followup_state(extraction, source_prompt=text)
+        if followup_state and context is not None:
+            context.chat_data[self._scoped_chat_state_key(update, "plan_followup")] = followup_state
+            await message.reply_text(self._plan_followup_question(followup_state["fields"][0], followup_state["language_code"]))
+            return True
+
+        request = extraction.to_trip_request(self.planner, source_prompt=text)
+        return await self._finalize_trip_request(update, request)
 
         try:
             request = self.planner.parse_trip_request(
@@ -399,6 +459,7 @@ class BotHandlers:
             await message.reply_text(self._build_plan_prompt_text(self._chat_language(update.effective_chat.id if update.effective_chat else None)))
             return False
 
+        request.interests = self._merge_explicit_interests(text, request.interests)
         request.notes = ""
         followup_state = self._build_plan_followup_state(request, text)
         if followup_state and context is not None:
@@ -1020,7 +1081,7 @@ class BotHandlers:
             recent_messages = recent_messages[-8:]
             context.chat_data["recent_group_messages"] = recent_messages
 
-        analyzer = GroupChatAnalyzer()
+            analyzer = GroupChatAnalyzer(planner=self.planner, request_extractor=self.request_extractor)
         signal = analyzer.analyze_messages(recent_messages)
         active_trip = self.db.get_active_trip(chat.id)
         if active_trip and any(

@@ -39,6 +39,7 @@ from logging_config import get_logger, setup_logging
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travelpayouts_partner_links import TravelpayoutsPartnerLinksClient, TravelpayoutsPartnerLinksConfig
 from travel_planner import TravelPlanner
+from trip_request_extractor import TripRequestExtractor
 
 logger = get_logger(__name__)
 
@@ -122,7 +123,16 @@ def build_application():
     flight_provider = TravelpayoutsFlightProvider(settings.travelpayouts_api_key, partner_links)
     service = TripService(database, planner, flight_provider)
     housing_provider = build_housing_provider()
-    handlers = BotHandlers(database, planner, formatter, service, housing_provider, flight_provider)
+    request_extractor = TripRequestExtractor(planner)
+    handlers = BotHandlers(
+        database,
+        planner,
+        formatter,
+        service,
+        housing_provider,
+        flight_provider,
+        request_extractor=request_extractor,
+    )
 
     app = (
         ApplicationBuilder()

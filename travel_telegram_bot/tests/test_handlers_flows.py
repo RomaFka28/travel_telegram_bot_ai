@@ -13,6 +13,7 @@ from telegram.error import Conflict
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
 from travel_result_models import TravelSearchResult
+from trip_request_extractor import TripRequestExtraction
 
 
 class DummyMessage:
@@ -414,7 +415,7 @@ def test_plan_command_creates_trip_and_archives_previous(tmp_path) -> None:
     assert "Казань" in first_message.replies[1]["text"]
 
 
-def test_plan_command_populates_housing_results_without_explicit_housing_keywords(tmp_path) -> None:
+def test_plan_command_does_not_mark_housing_need_without_explicit_housing_keywords(tmp_path) -> None:
     database, handlers = build_handlers(tmp_path)
     update, _ = make_update(chat_id=1513, chat_type="private")
     context = DummyContext(args=["Хочу", "в", "Стамбул", "один,", "вылет", "из", "Тбилиси", "12", "июня,", "билет", "в", "одну", "сторону,", "бюджет", "Бизнес,", "интересуют", "прогулки", "и", "еда"])
@@ -423,7 +424,20 @@ def test_plan_command_populates_housing_results_without_explicit_housing_keyword
 
     trip = database.get_active_trip(1513)
     assert trip is not None
-    assert trip["housing_results"]
+    assert "housing" not in (trip["detected_needs"] or "")
+
+
+def test_plan_command_preserves_multiple_explicit_interests(tmp_path) -> None:
+    database, handlers = build_handlers(tmp_path)
+    update, _ = make_update(chat_id=1515, chat_type="private")
+    context = DummyContext(args=["Хочу", "в", "Стамбул", "один,", "вылет", "из", "Тбилиси", "12", "июня,", "билет", "в", "одну", "сторону,", "бюджет", "Бизнес,", "интересуют", "прогулки", "и", "еда"])
+
+    asyncio.run(handlers.plan_command(update, context))
+
+    trip = database.get_active_trip(1515)
+    assert trip is not None
+    assert "прогулки" in (trip["interests_text"] or "")
+    assert "еда" in (trip["interests_text"] or "")
 
 
 def test_newtrip_flow_creates_trip(tmp_path) -> None:
@@ -1549,3 +1563,36 @@ def test_delete_trip_command_without_args_returns_usage_message(tmp_path) -> Non
     asyncio.run(handlers.delete_trip_command(update, DummyContext()))
 
     assert message.replies[-1]["text"] == "Использование: /delete_trip 12"
+
+
+def test_create_trip_from_text_uses_extraction_missing_fields_for_followup(tmp_path) -> None:
+    _, handlers = build_handlers(tmp_path)
+    update, message = make_update(
+        text="Хочу в Стамбул 12 июня, нужен билет, бюджет Бизнес",
+        chat_id=1812,
+        chat_type="private",
+    )
+    context = DummyContext()
+    extraction = TripRequestExtraction(
+        destination="Стамбул",
+        origin=None,
+        dates_text="12 июня",
+        days_count=None,
+        group_size=1,
+        budget_text="Бизнес",
+        interests=[],
+        needs=["tickets"],
+        route_type="unknown",
+        notes="",
+        language_code="ru",
+        missing_fields=["origin", "route_type"],
+        is_actionable=False,
+    )
+
+    with patch.object(handlers.request_extractor, "extract_async", new=AsyncMock(return_value=extraction)):
+        created = asyncio.run(handlers._create_trip_from_text(update, update.effective_message.text, context))
+
+    assert created is True
+    assert "plan_followup:1" in context.chat_data
+    assert context.chat_data["plan_followup:1"]["fields"] == ["origin", "route_type"]
+    assert "вылет" in message.replies[-1]["text"].lower()

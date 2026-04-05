@@ -8,6 +8,7 @@ from threading import Lock
 
 from travel_links import CATEGORY_KEYWORDS, detect_link_needs
 from travel_planner import TravelPlanner
+from trip_request_extractor import TripRequestExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class ChatSignal:
     participants_mentioned: list[str] = field(default_factory=list)
     budget_hint: str | None = None
     interests: list[str] = field(default_factory=list)
+    route_type: str = "unknown"
     detected_needs: list[str] = field(default_factory=list)
     need_strengths: dict[str, int] = field(default_factory=dict)
     destination_votes: list[tuple[str, int]] = field(default_factory=list)
@@ -74,11 +76,17 @@ class GroupChatAnalyzer:
     Создавать можно без опаски — city_names не пересобирается.
     """
     
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        planner: TravelPlanner | None = None,
+        request_extractor: TripRequestExtractor | None = None,
+    ) -> None:
         # Используем общий кэш вместо создания нового
         self._city_names: set[str] = _get_or_build_city_names()
         # TravelPlanner нужен только для извлечения сущностей — переиспользуем общий
-        self._planner = TravelPlanner()
+        self._planner = planner or TravelPlanner()
+        self._request_extractor = request_extractor
 
     def analyze(self, text: str) -> ChatSignal:
         normalized = text.lower().strip()
@@ -90,41 +98,65 @@ class GroupChatAnalyzer:
         group_size: int | None = None
         budget_hint: str | None = None
         interests: list[str] = []
+        route_type = "unknown"
         detected_needs = sorted(detect_link_needs(text))
         need_strengths = self._score_needs(normalized)
 
-        try:
-            destination = self._planner._extract_destination(text)
-        except (ValueError, AttributeError, TypeError) as e:
-            logger.debug("Failed to extract destination: %s", e)
-        try:
-            origin = self._planner._extract_origin(text)
-        except (ValueError, AttributeError, TypeError) as e:
-            logger.debug("Failed to extract origin: %s", e)
-        try:
-            raw_dates = self._planner._extract_dates(text)
-            dates_text = raw_dates if raw_dates != "не указаны" else None
-        except (ValueError, AttributeError, TypeError) as e:
-            logger.debug("Failed to extract dates: %s", e)
-        try:
-            parsed_days = self._planner._extract_days_count(text)
-            days_count = parsed_days if parsed_days != 3 or self._has_explicit_days(text) else None
-        except (ValueError, AttributeError, TypeError) as e:
-            logger.debug("Failed to extract days: %s", e)
-        try:
-            parsed_group_size = self._planner._extract_group_size(text)
-            group_size = parsed_group_size if self._has_explicit_group_size(text) else None
-        except (ValueError, AttributeError, TypeError) as e:
-            logger.debug("Failed to extract group size: %s", e)
-        try:
-            raw_budget = self._planner._extract_budget(text)
-            budget_hint = raw_budget if raw_budget != "Бизнес" or self._has_explicit_budget(text) else None
-        except (ValueError, AttributeError, TypeError) as e:
-            logger.debug("Failed to extract budget: %s", e)
-        try:
-            interests = self._planner._extract_interests(text)
-        except (ValueError, AttributeError, TypeError) as e:
-            logger.debug("Failed to extract interests: %s", e)
+        if self._request_extractor is not None:
+            extraction = self._request_extractor.extract(
+                text,
+                planner=self._planner,
+                allow_llm=False,
+            )
+            destination = extraction.destination
+            origin = extraction.origin
+            dates_text = extraction.dates_text
+            days_count = extraction.days_count
+            group_size = extraction.group_size
+            budget_hint = extraction.budget_text
+            interests = list(extraction.interests)
+            route_type = extraction.route_type
+            detected_needs = sorted(set(detected_needs) | set(extraction.needs))
+
+        if destination is None:
+            try:
+                destination = self._planner._extract_destination(text)
+            except (ValueError, AttributeError, TypeError) as e:
+                logger.debug("Failed to extract destination: %s", e)
+        if origin is None:
+            try:
+                origin = self._planner._extract_origin(text)
+            except (ValueError, AttributeError, TypeError) as e:
+                logger.debug("Failed to extract origin: %s", e)
+        if dates_text is None:
+            try:
+                raw_dates = self._planner._extract_dates(text)
+                dates_text = raw_dates if raw_dates != "не указаны" else None
+            except (ValueError, AttributeError, TypeError) as e:
+                logger.debug("Failed to extract dates: %s", e)
+        if days_count is None:
+            try:
+                parsed_days = self._planner._extract_days_count(text)
+                days_count = parsed_days if parsed_days != 3 or self._has_explicit_days(text) else None
+            except (ValueError, AttributeError, TypeError) as e:
+                logger.debug("Failed to extract days: %s", e)
+        if group_size is None:
+            try:
+                parsed_group_size = self._planner._extract_group_size(text)
+                group_size = parsed_group_size if self._has_explicit_group_size(text) else None
+            except (ValueError, AttributeError, TypeError) as e:
+                logger.debug("Failed to extract group size: %s", e)
+        if budget_hint is None:
+            try:
+                raw_budget = self._planner._extract_budget(text)
+                budget_hint = raw_budget if raw_budget != "Бизнес" or self._has_explicit_budget(text) else None
+            except (ValueError, AttributeError, TypeError) as e:
+                logger.debug("Failed to extract budget: %s", e)
+        if not interests:
+            try:
+                interests = self._planner._extract_interests(text)
+            except (ValueError, AttributeError, TypeError) as e:
+                logger.debug("Failed to extract interests: %s", e)
 
         has_intent = self._looks_like_trip_request(
             normalized,
@@ -148,6 +180,7 @@ class GroupChatAnalyzer:
             participants_mentioned=participants,
             budget_hint=budget_hint,
             interests=interests,
+            route_type=route_type,
             detected_needs=detected_needs,
             need_strengths=need_strengths,
             raw_text=text,
