@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 from config import HTTP_DEFAULT_MAX_RETRIES, HTTP_DEFAULT_TIMEOUT
@@ -196,7 +197,6 @@ def safe_http_get(
         Ответ сервера
     """
     if params:
-        import urllib.parse
         separator = "&" if "?" in url else "?"
         url = f"{url}{separator}{urllib.parse.urlencode(params)}"
     
