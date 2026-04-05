@@ -198,7 +198,7 @@ class TravelpayoutsFlightProvider:
             ]
 
         results: list[TravelSearchResult] = []
-        for label, offer in self._prioritize_offers(offers)[:4]:
+        for label, offer in self._prioritize_offers(offers)[:1]:
             cabin_label = self._trip_class_label(offer.trip_class)
             transfers = "без пересадок" if offer.number_of_changes == 0 else f"{offer.number_of_changes} перес."
             price_per_person = offer.value
@@ -219,7 +219,7 @@ class TravelpayoutsFlightProvider:
                     note=transfers if not cabin_label else f"{cabin_label}, {transfers}",
                 )
             )
-        return trim_results(results, limit=4)
+        return trim_results(results, limit=1)
 
     def _build_search_url(
         self,
@@ -459,28 +459,8 @@ class TravelpayoutsFlightProvider:
         if not offers:
             return []
 
-        prioritized: list[tuple[str, FlightOffer]] = []
-        seen: set[tuple[int, int, str, str, int]] = set()
-
-        cheapest = offers[0]
-        prioritized.append(("Самый дешевый", cheapest))
-        seen.add(self._offer_identity(cheapest))
-
-        direct_offer = next((offer for offer in offers if offer.number_of_changes == 0), None)
-        if direct_offer and self._offer_identity(direct_offer) not in seen:
-            prioritized.append(("Самый дешевый прямой", direct_offer))
-            seen.add(self._offer_identity(direct_offer))
-
-        for offer in offers:
-            identity = self._offer_identity(offer)
-            if identity in seen:
-                continue
-            label = "Еще вариант" if len(prioritized) == 2 else "Еще вариант 2"
-            prioritized.append((label, offer))
-            seen.add(identity)
-            if len(prioritized) >= 4:
-                break
-        return prioritized
+        best = offers[0]
+        return [("Авиабилет", best)]
 
     @staticmethod
     def _normalize_budget_level(budget_text: str) -> str:
