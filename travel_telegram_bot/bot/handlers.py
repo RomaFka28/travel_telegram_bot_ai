@@ -402,7 +402,6 @@ class BotHandlers:
             trip_id, chat.id, replaced_trip,
         )
 
-        await self._send_trip_summary(message, trip_id, self._chat_language(chat.id))
         replaced_status_message = await self._replace_or_remove_progress_message(
             progress_message,
             self.formatter._build_summary_html(trip_id),
