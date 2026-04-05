@@ -43,5 +43,5 @@ def truncate_source_prompt(value: str, max_length: int = SOURCE_PROMPT_MAX_LENGT
     text = (value or "").strip()
     if len(text) <= max_length:
         return text
-    # Берём хвост — slicing по симвоалам Unicode-safe в Python
-    return text[-max_length:]
+    # Берём начало — оригинальный запрос важнее накопленных правок
+    return text[:max_length]

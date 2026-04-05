@@ -293,19 +293,20 @@ class GroupChatAnalyzer:
     @staticmethod
     def _has_explicit_budget(text: str) -> bool:
         lowered = text.lower()
-        return any(
-            token in lowered
-            for token in (
-                "бюджет",
-                "эконом",
-                "бизнес",
-                "первый класс",
-                "до ",
-                "на ",
-                "от ",
-                "не ограничен",
-                "без ограничений",
-                "подешевле",
-                "дешевле",
-            )
+        # Explicit budget keywords that don't need a number after them
+        explicit_keywords = (
+            "бюджет",
+            "эконом",
+            "бизнес",
+            "первый класс",
+            "не ограничен",
+            "без ограничений",
+            "подешевле",
+            "дешевле",
         )
+        if any(token in lowered for token in explicit_keywords):
+            return True
+        # Prepositions that need a number AFTER them: "до 50", "на 100", "от 1000"
+        for match in re.finditer(r"(?:до|на|от)\s+(\d+)", lowered):
+            return True
+        return False

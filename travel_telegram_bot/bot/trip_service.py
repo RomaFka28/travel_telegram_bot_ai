@@ -307,7 +307,12 @@ class TripService:
         dates_text = trip["dates_text"] or ""
         try:
             summary = await asyncio.to_thread(fetch_weather_summary, destination, dates_text)
-        except WeatherError:
+        except (WeatherError, OSError):
+            # WeatherError: city not found
+            # OSError: network/DNS timeout — don't propagate to user
+            summary = None
+        except Exception:
+            # Catch-all to prevent weather errors from crashing trip operations
             summary = None
         self._db.update_trip_fields(
             trip_id,

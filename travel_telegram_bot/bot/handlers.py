@@ -70,6 +70,16 @@ class BotHandlers:
         self.housing_provider = housing_provider
         self.flight_provider = flight_provider
         self.request_extractor = request_extractor or TripRequestExtractor(planner)
+        # Cache GroupChatAnalyzer instance (issue #6)
+        from bot.group_chat_analyzer import GroupChatAnalyzer
+        self._group_analyzer = GroupChatAnalyzer(planner=self.planner, request_extractor=self.request_extractor)
+
+    @staticmethod
+    def _get_or_create_async_lock(chat_data: dict, lock_key: str) -> asyncio.Lock:
+        """Lazily create asyncio.Lock inside async context to avoid loop binding issues (issue #5)."""
+        if lock_key not in chat_data:
+            chat_data[lock_key] = asyncio.Lock()
+        return chat_data[lock_key]
 
     @staticmethod
     def _display_name(update: Update) -> str:
@@ -449,25 +459,6 @@ class BotHandlers:
         request = extraction.to_trip_request(self.planner, source_prompt=text)
         return await self._finalize_trip_request(update, request)
 
-        try:
-            request = self.planner.parse_trip_request(
-                text,
-                language_code=self._chat_language(update.effective_chat.id if update.effective_chat else None),
-            )
-        except ValueError as exc:
-            await message.reply_text(str(exc))
-            await message.reply_text(self._build_plan_prompt_text(self._chat_language(update.effective_chat.id if update.effective_chat else None)))
-            return False
-
-        request.interests = self._merge_explicit_interests(text, request.interests)
-        request.notes = ""
-        followup_state = self._build_plan_followup_state(request, text)
-        if followup_state and context is not None:
-            context.chat_data[self._scoped_chat_state_key(update, "plan_followup")] = followup_state
-            await message.reply_text(self._plan_followup_question(followup_state["fields"][0], followup_state["language_code"]))
-            return True
-        return await self._finalize_trip_request(update, request)
-
     async def _should_send_group_reply(
         self,
         context: ContextTypes.DEFAULT_TYPE,
@@ -476,7 +467,7 @@ class BotHandlers:
         cooldown_seconds: int,
     ) -> bool:
         lock_key = f"_lock_{key}"
-        lock = context.chat_data.setdefault(lock_key, asyncio.Lock())
+        lock = self._get_or_create_async_lock(context.chat_data, lock_key)
         async with lock:
             now = time.time()
             last = context.chat_data.get(key, 0)
@@ -1068,12 +1059,9 @@ class BotHandlers:
         if len(text) < 15:
             return
 
-        from bot.group_chat_analyzer import GroupChatAnalyzer
-
         list_lock_key = "_lock_recent_messages"
-        if list_lock_key not in context.chat_data:
-            context.chat_data[list_lock_key] = asyncio.Lock()
-        async with context.chat_data[list_lock_key]:
+        list_lock = self._get_or_create_async_lock(context.chat_data, list_lock_key)
+        async with list_lock:
             recent_messages = context.chat_data.get("recent_group_messages", [])
             if not isinstance(recent_messages, list):
                 recent_messages = []
@@ -1081,8 +1069,7 @@ class BotHandlers:
             recent_messages = recent_messages[-8:]
             context.chat_data["recent_group_messages"] = recent_messages
 
-            analyzer = GroupChatAnalyzer(planner=self.planner, request_extractor=self.request_extractor)
-        signal = analyzer.analyze_messages(recent_messages)
+        signal = self._group_analyzer.analyze_messages(recent_messages)
         active_trip = self.db.get_active_trip(chat.id)
         if active_trip and any(
             [
@@ -1138,25 +1125,29 @@ class BotHandlers:
                     )
                 if updates:
                     trip_id = int(active_trip["id"])
-                    self.db.update_trip_fields(trip_id, updates)
-                    try:
-                        await self.service._rebuild_trip(trip_id)
-                        if "dates_text" in updates:
-                            await self.service._refresh_weather_for_trip(trip_id)
-                    except Exception:
-                        logger.exception(
-                            "Group trip auto-update failed: chat_id=%s message_id=%s user_id=%s trip_id=%s updates=%s text=%r",
-                            chat.id,
-                            getattr(message, "message_id", None),
-                            user.id if user else None,
-                            trip_id,
-                            sorted(updates.keys()),
-                            text,
-                        )
-                        await message.reply_text(
-                            "Не удалось обновить поездку автоматически. Попробуйте повторить сообщение чуть позже."
-                        )
-                        return
+                    # Serialize updates per-trip to avoid race between concurrent messages (issue #2)
+                    trip_lock_key = f"_trip_lock_{trip_id}"
+                    trip_lock = self._get_or_create_async_lock(context.chat_data, trip_lock_key)
+                    async with trip_lock:
+                        self.db.update_trip_fields(trip_id, updates)
+                        try:
+                            await self.service._rebuild_trip(trip_id)
+                            if "dates_text" in updates:
+                                await self.service._refresh_weather_for_trip(trip_id)
+                        except Exception:
+                            logger.exception(
+                                "Group trip auto-update failed: chat_id=%s message_id=%s user_id=%s trip_id=%s updates=%s text=%r",
+                                chat.id,
+                                getattr(message, "message_id", None),
+                                user.id if user else None,
+                                trip_id,
+                                sorted(updates.keys()),
+                                text,
+                            )
+                            await message.reply_text(
+                                "Не удалось обновить поездку автоматически. Попробуйте повторить сообщение чуть позже."
+                            )
+                            return
                     if await self._should_send_group_reply(context, "last_auto_update_reply", cooldown_seconds=420):
                         refreshed_trip = self.db.get_trip_by_id(trip_id)
                         if refreshed_trip:

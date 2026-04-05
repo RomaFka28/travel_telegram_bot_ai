@@ -161,7 +161,7 @@ def test_delete_trip_clears_selected_trip_when_selected_trip_is_removed(tmp_path
     database = Database(str(tmp_path / "delete_selected.db"))
     database.init_db()
 
-    trip_id = database.create_trip(chat_id=17, created_by=1, payload=_sample_payload("ÐšÐ°Ð·Ð°Ð½ÑŒ"))
+    trip_id = database.create_trip(chat_id=17, created_by=1, payload=_sample_payload("Казань"))
     database.set_selected_trip(17, trip_id)
 
     assert database.delete_trip(17, trip_id) is True
@@ -172,8 +172,8 @@ def test_delete_trip_keeps_selected_trip_when_another_trip_is_removed(tmp_path) 
     database = Database(str(tmp_path / "delete_other.db"))
     database.init_db()
 
-    first_trip_id = database.create_trip(chat_id=18, created_by=1, payload=_sample_payload("ÐšÐ°Ð·Ð°Ð½ÑŒ"))
-    second_trip_id = database.create_trip(chat_id=18, created_by=1, payload=_sample_payload("Ð¡Ð¾Ñ‡Ð¸"))
+    first_trip_id = database.create_trip(chat_id=18, created_by=1, payload=_sample_payload("Казань"))
+    second_trip_id = database.create_trip(chat_id=18, created_by=1, payload=_sample_payload("Сочи"))
     database.set_selected_trip(18, first_trip_id)
 
     assert database.delete_trip(18, second_trip_id) is True

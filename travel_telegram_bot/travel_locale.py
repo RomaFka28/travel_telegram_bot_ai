@@ -165,14 +165,26 @@ def _cache_expiry_for(value: str | None, is_error: bool = False) -> float:
     return time.monotonic() + ttl_seconds
 
 
+# Module-level single-thread executor for geocoding — avoids creating ThreadPoolExecutor on every call
+_GEO_EXECUTOR: ThreadPoolExecutor | None = None
+_GEO_EXECUTOR_LOCK = Lock()
+
+def _get_geo_executor() -> ThreadPoolExecutor:
+    global _GEO_EXECUTOR
+    with _GEO_EXECUTOR_LOCK:
+        if _GEO_EXECUTOR is None:
+            _GEO_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="geo")
+        return _GEO_EXECUTOR
+
+
 def _resolve_place_country_uncached(normalized: str) -> tuple[str | None, bool]:
     """
     Возвращает (country, is_error).
     is_error=True означает временную ошибку (стоит закэшировать кратко).
     """
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            geo = executor.submit(geocode_city, normalized).result(timeout=GEOCODE_TIMEOUT_SECONDS)
+        executor = _get_geo_executor()
+        geo = executor.submit(geocode_city, normalized).result(timeout=GEOCODE_TIMEOUT_SECONDS)
     except FutureTimeoutError:
         logger.warning("Geocoding timeout for %r (%.1fs)", normalized, GEOCODE_TIMEOUT_SECONDS)
         return None, True  # Временная ошибка — короткий TTL

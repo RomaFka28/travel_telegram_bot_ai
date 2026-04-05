@@ -92,7 +92,7 @@ class LLMProviderPool:
     async def get_next(self) -> LLMProvider:
         async with self._lock:
             index = next(self._cycle)
-            return self._providers[index]
+        return self._providers[index]
 
     def all_providers(self) -> list[LLMProvider]:
         return list(self._providers)

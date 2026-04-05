@@ -156,12 +156,14 @@ class Database:
         else:
             # Получаем соединение из пула с таймаутом 30 секунд
             # Если пул пуст и таймаут истёк — создаём временное соединение
+            is_temporary = False
             if self._sqlite_pool:
                 try:
                     conn = self._sqlite_pool.get(timeout=30)
                 except Empty:
                     # Пул заблокирован — создаём временное соединение
                     conn = self._create_sqlite_connection()
+                    is_temporary = True
             else:
                 conn = self._create_sqlite_connection()
             try:
@@ -171,7 +173,10 @@ class Database:
                 conn.rollback()
                 raise
             finally:
-                if self._sqlite_pool:
+                if is_temporary:
+                    # Временное соединение закрываем, а не кладём в пул (issue #4)
+                    conn.close()
+                elif self._sqlite_pool:
                     self._sqlite_pool.put(conn)
                 else:
                     conn.close()
@@ -199,6 +204,7 @@ class Database:
         )
 
     def _init_sqlite(self) -> None:
+        # executescript делает неявный COMMIT — запускаем отдельно
         with self._connect() as conn:
             conn.executescript(
                 """
@@ -264,6 +270,8 @@ class Database:
                 );
                 """
             )
+        # ALTER TABLE — отдельная транзакция, чтобы не смешивать с executescript (issue #7)
+        with self._connect() as conn:
             existing_columns = self._sqlite_table_columns(conn, "trips")
             for column_name, definition in TRIP_COLUMNS.items():
                 if column_name not in existing_columns:
@@ -586,18 +594,12 @@ class Database:
             # BEGIN IMMEDIATE блокирует базу на запись, предотвращая race condition
             # при конкурентном создании поездок для одного чата
             conn.execute("BEGIN IMMEDIATE")
-            try:
-                conn.execute(
-                    "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND status = 'active'",
-                    (chat_id,),
-                )
-                cursor = conn.execute(sql, params)
-                trip_id = int(cursor.lastrowid)
-                conn.commit()
-                return trip_id
-            except Exception:
-                conn.rollback()
-                raise
+            conn.execute(
+                "UPDATE trips SET status = 'archived', updated_at = CURRENT_TIMESTAMP WHERE chat_id = ? AND status = 'active'",
+                (chat_id,),
+            )
+            cursor = conn.execute(sql, params)
+            return int(cursor.lastrowid)
 
     def archive_active_trip(self, chat_id: int) -> bool:
         if self.is_postgres:

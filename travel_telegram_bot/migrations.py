@@ -60,7 +60,14 @@ class MigrationManager:
             """)
         
         rows = conn.execute(f"SELECT version FROM {table_name} ORDER BY version").fetchall()
-        return {row[0] for row in rows}
+        # Handle both dict rows (PostgreSQL with dict_row) and tuple rows (SQLite)
+        versions: set[int] = set()
+        for row in rows:
+            if isinstance(row, dict):
+                versions.add(row["version"])
+            else:
+                versions.add(row[0])
+        return versions
     
     def _record_migration(self, conn, version: int, name: str, is_postgres: bool) -> None:
         """Записывает информацию о применённой миграции."""

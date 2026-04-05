@@ -16,7 +16,12 @@ except ModuleNotFoundError:
                 if name in data:
                     value = data[name]
                 else:
-                    value = getattr(self.__class__, name, None)
+                    # Check for Field with default_factory — call it per-instance
+                    class_default = getattr(self.__class__, name, None)
+                    if callable(class_default) and not isinstance(class_default, type):
+                        value = class_default()
+                    else:
+                        value = class_default
                 setattr(self, name, value)
 
         @classmethod
@@ -27,8 +32,9 @@ except ModuleNotFoundError:
         return dict(kwargs)
 
     def Field(*, default_factory=None, default=None):
+        # Return the factory itself — it will be called per-instance in __init__
         if default_factory is not None:
-            return default_factory()
+            return default_factory
         return default
 
 from llm_travel_planner import LLMTravelPlanner
