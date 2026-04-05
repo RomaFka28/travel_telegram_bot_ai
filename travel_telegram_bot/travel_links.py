@@ -330,16 +330,15 @@ def _housing_links(
         if ostrovok_params:
             ostrovok_url += "?" + urllib.parse.urlencode(ostrovok_params)
 
-        # Sutochno: use www domain with search_text param
+        # Sutochno: correct URL format with term, guests_adults, occupied
+        occupied_val = f"{start_date};{end_date}" if start_date and end_date else None
         sutochno_params = {
-            "search_text": normalized_destination,
-            "guests": str(max(1, group_size)),
+            "term": normalized_destination,
+            "guests_adults": str(max(1, group_size)),
         }
-        if start_date:
-            sutochno_params["from"] = start_date
-        if end_date:
-            sutochno_params["to"] = end_date
-        sutochno_url = "https://www.sutochno.ru/search?" + urllib.parse.urlencode(sutochno_params)
+        if occupied_val:
+            sutochno_params["occupied"] = occupied_val
+        sutochno_url = "https://sutochno.ru/front/searchapp/search?" + urllib.parse.urlencode(sutochno_params)
 
         yandex_params: dict[str, str] = {"adults": str(max(1, group_size))}
         if start_date:
