@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
-    "tickets": ("билет", "авиа", "самолет", "самолёт", "летим", "перелет", "перелёт", "рейс", "flight", "ticket"),
+    "tickets": ("билет", "авиа", "самолет", "самолёт", "летим", "перелет", "перелёт", "рейс", "вылет", "прилет", "flight", "ticket"),
     "housing": ("отел", "гостини", "жиль", "апарт", "квартир", "суточно", "ночев", "домик", "турбаз", "hotel", "apartment", "stay"),
     "excursions": ("экскурс", "гид", "музей", "тур", "tripster", "sputnik", "wegotrip", "аудиогид", "activity", "excursion"),
     "road": ("поезд", "автобус", "дорог", "маршрут", "электрич", "жд", "ж/д", "tutu", "omio", "rome2rio", "train", "bus"),
@@ -356,7 +356,6 @@ def _housing_links(
 
         if wants_home_style:
             return [
-                ("🏠 Airbnb", airbnb_url),
                 ("🏠 Суточно", sutochno_url),
                 ("🧳 Яндекс Путешествия", yandex_url),
                 ("🏨 Островок", ostrovok_url),
