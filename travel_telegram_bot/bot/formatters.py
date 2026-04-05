@@ -527,13 +527,16 @@ class TripFormatter:
     def _render_details(self, trip: dict, lang: str, has_destination: bool) -> str:
         """Рендерит участников и варианты дат."""
         trip_id = int(trip["id"])
+        date_lines = self._date_lines(trip_id)
+        date_block = ""
+        if date_lines and date_lines != [tr(lang, "date_options_empty")]:
+            date_block = "\n\n<b>" + tr(lang, "summary_date_options") + "</b>\n" + "\n".join(date_lines)
+
         return (
             "\n\n"
             + f"<b>{tr(lang, 'summary_participants')}</b>\n"
             + "\n".join(self._participant_lines(trip_id))
-            + "\n\n"
-            + f"<b>{tr(lang, 'summary_date_options')}</b>\n"
-            + "\n".join(self._date_lines(trip_id))
+            + date_block
         )
     
     def _render_participants(self, trip_id: int, lang: str) -> str:
