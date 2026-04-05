@@ -1,5 +1,5 @@
 python-telegram-bot==22.7
 python-dotenv==1.1.1
 psycopg[binary]==3.2.10
-pydantic==2.10.6
+pydantic>=2.11
 pytest==9.0.2
