@@ -73,6 +73,19 @@ async def post_init(application) -> None:
     ]
     await application.bot.set_my_commands(commands)
 
+    # Restore reminders on startup: send missed reminders for active trips
+    from database import Database
+    from reminders import restore_reminders_on_startup
+
+    db_instance = application.bot_data.get("db")
+    if db_instance:
+        try:
+            sent = await restore_reminders_on_startup(application.bot, db_instance)
+            if sent:
+                logger.info("Restored %d reminders on startup", sent)
+        except Exception as e:
+            logger.warning("Failed to restore reminders on startup: %s", e)
+
 
 
 def build_application():
@@ -140,6 +153,9 @@ def build_application():
         .post_init(post_init)
         .build()
     )
+
+    # Store db reference for reminder restoration
+    app.bot_data["db"] = database
 
     new_trip_conversation = ConversationHandler(
         entry_points=[CommandHandler("newtrip", handlers.new_trip_start)],

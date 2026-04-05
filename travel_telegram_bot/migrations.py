@@ -262,4 +262,12 @@ def create_migration_manager() -> MigrationManager:
         ],
     ))
     
+    # Миграция #3: reminders_sent для отслеживания отправленных напоминаний
+    manager.register(Migration(
+        version=3,
+        name="add_reminders_sent",
+        up_sqlite=["ALTER TABLE trips ADD COLUMN reminders_sent TEXT DEFAULT '[]'"],
+        up_postgres=["ALTER TABLE trips ADD COLUMN IF NOT EXISTS reminders_sent TEXT DEFAULT '[]'"],
+    ))
+
     return manager

@@ -397,6 +397,23 @@ class BotHandlers:
         await self.db._run(self.db.set_selected_trip, chat.id, trip_id)
         await self.service._refresh_weather_for_trip(trip_id)
 
+        # Schedule reminders for the new trip
+        trip_lang = self._chat_language(chat.id)
+        try:
+            from reminders import schedule_trip_reminders
+
+            await schedule_trip_reminders(
+                bot=context.bot,
+                chat_id=chat.id,
+                trip_id=trip_id,
+                trip_title=payload.get("title", f"Поездка #{trip_id}"),
+                destination=payload.get("destination", ""),
+                dates_text=payload.get("dates_text", ""),
+                lang=trip_lang,
+            )
+        except Exception as e:
+            logger.warning("Failed to schedule reminders for trip %d: %s", trip_id, e)
+
         logger.info(
             "trip_created trip_id=%s chat_id=%s replaced=%s",
             trip_id, chat.id, replaced_trip,

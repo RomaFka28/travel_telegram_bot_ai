@@ -703,6 +703,41 @@ class Database:
             self.set_selected_trip(chat_id, trip_id)
         return activated
 
+    def update_reminders_sent(self, trip_id: int, reminders_sent_json: str) -> bool:
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE trips SET reminders_sent = %s, updated_at = CURRENT_TIMESTAMP WHERE id = %s",
+                        (reminders_sent_json, trip_id),
+                    )
+                    return cur.rowcount > 0
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE trips SET reminders_sent = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (reminders_sent_json, trip_id),
+            )
+            return cursor.rowcount > 0
+
+    def get_all_active_trips_with_reminders(self) -> list[dict[str, Any]]:
+        """Получает все активные поездки с reminder статусами."""
+        if self.is_postgres:
+            with self._connect() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT id, chat_id, title, destination, dates_text, language_code, reminders_sent "
+                        "FROM trips WHERE status = 'active'"
+                    )
+                    rows = cur.fetchall()
+                    return [dict(r) for r in rows]
+        with self._connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, chat_id, title, destination, dates_text, language_code, reminders_sent "
+                "FROM trips WHERE status = 'active'"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
     def delete_trip(self, chat_id: int, trip_id: int) -> bool:
         # Atomically delete + clear selected in one transaction (fix TOCTOU)
         if self.is_postgres:
