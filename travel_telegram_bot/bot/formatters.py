@@ -128,10 +128,29 @@ class TripFormatter:
         return "\n".join(lines)
 
     def _detected_needs_line(self, trip: dict) -> str:
+        from travel_links import CATEGORY_KEYWORDS
+
         lang = self._trip_language(trip)
         detected_needs = deserialize_needs(trip.get("detected_needs"))
         if not detected_needs:
             return ""
+
+        # Check if all detected needs were explicitly mentioned by the user
+        # (single /plan request) vs bot inferred them from chat analysis
+        source_prompt = (trip.get("source_prompt") or "").lower()
+        context_text = (trip.get("context_text") or "").lower()
+        combined = f"{source_prompt} {context_text}"
+
+        explicitly_mentioned = 0
+        for need in detected_needs:
+            keywords = CATEGORY_KEYWORDS.get(need, ())
+            if any(kw.lower() in combined for kw in keywords):
+                explicitly_mentioned += 1
+
+        # If user explicitly mentioned ALL detected needs, don't show "bot prepared" line
+        if explicitly_mentioned == len(detected_needs) and len(detected_needs) > 0:
+            return ""
+
         labels = {
             "tickets": tr(lang, "need_tickets"),
             "housing": tr(lang, "need_housing"),
