@@ -14,7 +14,7 @@ class OpenRouterConfig:
     api_key: str
     model: str = "qwen/qwen3.6-plus:free"
     base_url: str = "https://openrouter.ai/api/v1/chat/completions"
-    timeout_s: int = 60
+    timeout_s: int = 30
     use_web_search: bool = True
     web_max_results: int = 3
 
@@ -262,13 +262,13 @@ def generate_trip_plan(config: OpenRouterConfig, request: TripRequest) -> TripPl
 
     payload = build_trip_plan_payload(config, request)
     data = json.dumps(payload).encode("utf-8")
-    
+
     try:
         raw = safe_http_post(
             config.base_url,
             data=data,
             headers=_build_request_headers(config.api_key),
-            max_retries=3,
+            max_retries=2,
             timeout=config.timeout_s,
         )
     except Exception as exc:

@@ -345,7 +345,19 @@ class BotHandlers:
             chat.id, request.destination, isinstance(self.planner, LLMTravelPlanner),
         )
 
-        plan = None
+        # Heartbeat: update progress after 15s so user knows bot is alive
+        async def _heartbeat():
+            await asyncio.sleep(15)
+            if progress_message:
+                try:
+                    lang = self._chat_language(chat.id)
+                    await progress_message.edit_message_text(
+                        "Ещё думаю... Подождите немного." if lang == "ru" else "Still thinking... Please wait a bit."
+                    )
+                except Exception:
+                    pass
+
+        heartbeat_task = asyncio.create_task(_heartbeat()) if progress_message else None
         try:
             plan = await self._generate_plan(request)
         except Exception as exc:
@@ -359,6 +371,9 @@ class BotHandlers:
                 )
                 progress_message = None
             plan = await asyncio.to_thread(self.planner.generate_plan_heuristic, request)
+        finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
 
         payload = await asyncio.to_thread(
             self.service._build_trip_payload,
