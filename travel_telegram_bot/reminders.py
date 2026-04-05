@@ -68,15 +68,15 @@ def _format_reminder_text(trip_title: str, destination: str, reminder_type: str,
     days_left = (start_date - date.today()).days
 
     messages_ru = {
-        "pre_3d": f"⏰ Напоминание: через 3 дня поездка «{trip_title}» в {destination}!\n\n📋 Чек-лист:\n• Проверьте билеты и брони жилья\n• Подтвердите документы/загранпаспорта\n• Уточните погоду на даты\n\n📅 Вылет: {start_date.strftime('%d.%m.%Y')}",
-        "pre_1d": f"🧳 Завтра вылет в {destination}!\n\nНе забудьте:\n• Документы (паспорт, загран)\n• Билеты и брони (скриншоты)\n• Зарядки и адаптеры\n• Лекарства\n\n✈️ Вылет: {start_date.strftime('%d.%m.%Y')}\n🏨 Проживание: {'забронировано' if end_date else 'уточните'}",
+        "pre_3d": f"⏰ Напоминание: через 3 дня поездка «{trip_title}» в {destination}!\n\n📋 Чек-лист:\n• Проверьте билеты и брони жилья\n• Подтвердите документы/загранпаспорта\n• Сохраните скриншоты бронирований\n\n📅 Вылет: {start_date.strftime('%d.%m.%Y')}\n📍 {destination} • {days_left} дн.",
+        "pre_1d": f"🧳 Завтра вылет в {destination}!\n\nНе забудьте:\n• Документы (паспорт, загран)\n• Билеты и брони (скриншоты)\n• Зарядки и адаптеры\n• Лекарства\n\n✈️ Вылет: {start_date.strftime('%d.%m.%Y')}\n🏨 Проживание: {'забронировано' if end_date else 'проверьте ссылки из плана'}\n\n📍 /summary — полный план поездки",
         "return_day": f"🏠 Сегодня возвращаетесь из {destination}!\n\n📅 Возврат: {end_date.strftime('%d.%m.%Y') if end_date else 'сегодня'}\n\nНе забудьте:\n• Чекины в отеле\n• Сувениры\n• Проверить ничего ли не забыли\n\nКак доберётесь — отметьте статус через /status",
         "post_1d": f"📝 Надеемся, поездка в {destination} прошла отлично!\n\nРасскажите как всё прошло:\n• /status — обновите свой ответ\n• /summary — посмотрите итоговый план\n• /trips — история поездок\n\nЕсли хотите спланировать следующую — /plan ✈️",
     }
 
     messages_en = {
-        "pre_3d": f"⏰ Reminder: 3 days until \"{trip_title}\" to {destination}!\n\n📋 Checklist:\n• Check flights and accommodation\n• Confirm documents/passports\n• Check weather forecast\n\n📅 Departure: {start_date.strftime('%d.%m.%Y')}",
-        "pre_1d": f"🧳 Tomorrow: flight to {destination}!\n\nDon't forget:\n• Documents (passport)\n• Tickets and bookings (screenshots)\n• Chargers and adapters\n• Medications\n\n✈️ Departure: {start_date.strftime('%d.%m.%Y')}",
+        "pre_3d": f"⏰ Reminder: 3 days until \"{trip_title}\" to {destination}!\n\n📋 Checklist:\n• Check flights and accommodation\n• Confirm documents/passports\n• Save booking screenshots\n\n📅 Departure: {start_date.strftime('%d.%m.%Y')}\n📍 {destination} • {days_left} days",
+        "pre_1d": f"🧳 Tomorrow: flight to {destination}!\n\nDon't forget:\n• Documents (passport)\n• Tickets and bookings (screenshots)\n• Chargers and adapters\n• Medications\n\n✈️ Departure: {start_date.strftime('%d.%m.%Y')}\n📍 /summary — full trip plan",
         "return_day": f"🏠 Heading back from {destination} today!\n\n📅 Return: {end_date.strftime('%d.%m.%Y') if end_date else 'today'}\n\nDon't forget:\n• Hotel checkout\n• Souvenirs\n• Double-check you haven't left anything behind\n\nUse /status to update your reply when you're back",
         "post_1d": f"📝 Hope your trip to {destination} was great!\n\nShare how it went:\n• /status — update your reply\n• /summary — view the final plan\n• /trips — trip history\n\nWant to plan the next one? /plan ✈️",
     }
