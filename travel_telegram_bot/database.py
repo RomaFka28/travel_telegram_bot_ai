@@ -666,12 +666,7 @@ class Database:
         return activated
 
     def delete_trip(self, chat_id: int, trip_id: int) -> bool:
-        trip = self.get_trip_by_id(trip_id)
-        if not trip or int(trip["chat_id"]) != chat_id:
-            return False
-        selected_trip = self.get_selected_trip(chat_id)
-        should_clear_selected = bool(selected_trip and int(selected_trip["id"]) == trip_id)
-
+        # Atomically delete + clear selected in one transaction (fix TOCTOU)
         if self.is_postgres:
             with self._connect() as conn:
                 with conn.cursor() as cur:
@@ -680,21 +675,26 @@ class Database:
                         (trip_id, chat_id),
                     )
                     deleted = cur.rowcount > 0
-            if deleted:
-                if should_clear_selected:
-                    self.set_selected_trip(chat_id, None)
+                    if deleted:
+                        cur.execute(
+                            "UPDATE chat_settings SET selected_trip_id = NULL WHERE chat_id = %s AND selected_trip_id = %s",
+                            (chat_id, trip_id),
+                        )
             return deleted
 
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             cursor = conn.execute(
                 "DELETE FROM trips WHERE id = ? AND chat_id = ?",
                 (trip_id, chat_id),
             )
             deleted = cursor.rowcount > 0
-        if deleted:
-            if should_clear_selected:
-                self.set_selected_trip(chat_id, None)
-        return deleted
+            if deleted:
+                conn.execute(
+                    "UPDATE chat_settings SET selected_trip_id = NULL WHERE chat_id = ? AND selected_trip_id = ?",
+                    (chat_id, trip_id),
+                )
+            return deleted
 
     def update_trip_fields(self, trip_id: int, updates: dict[str, Any]) -> None:
         safe_updates = {key: value for key, value in updates.items() if key in EDITABLE_TRIP_FIELDS}
