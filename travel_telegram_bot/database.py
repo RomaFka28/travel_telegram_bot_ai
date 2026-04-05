@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Lock
 from typing import Any, Generator
+
+logger = logging.getLogger(__name__)
 
 import psycopg
 from psycopg.rows import dict_row
@@ -720,21 +723,27 @@ class Database:
             return cursor.rowcount > 0
 
     def get_all_active_trips_with_reminders(self) -> list[dict[str, Any]]:
-        """Получает все активные поездки с reminder статусами."""
+        """Получает все активные поездки с reminder статусами и языком чата."""
         if self.is_postgres:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT id, chat_id, title, destination, dates_text, language_code, reminders_sent "
-                        "FROM trips WHERE status = 'active'"
+                        "SELECT t.id, t.chat_id, t.title, t.destination, t.dates_text, t.reminders_sent, "
+                        "cs.language_code "
+                        "FROM trips t "
+                        "LEFT JOIN chat_settings cs ON t.chat_id = cs.chat_id "
+                        "WHERE t.status = 'active'"
                     )
                     rows = cur.fetchall()
                     return [dict(r) for r in rows]
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT id, chat_id, title, destination, dates_text, language_code, reminders_sent "
-                "FROM trips WHERE status = 'active'"
+                "SELECT t.id, t.chat_id, t.title, t.destination, t.dates_text, t.reminders_sent, "
+                "cs.language_code "
+                "FROM trips t "
+                "LEFT JOIN chat_settings cs ON t.chat_id = cs.chat_id "
+                "WHERE t.status = 'active'"
             ).fetchall()
             return [dict(r) for r in rows]
 

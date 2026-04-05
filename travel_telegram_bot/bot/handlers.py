@@ -324,7 +324,7 @@ class BotHandlers:
             logger.info("Could not delete progress message before sending final plan: %s", exc)
         return False
 
-    async def _finalize_trip_request(self, update: Update, request, *, notes_override: str = "") -> bool:
+    async def _finalize_trip_request(self, update: Update, request, context, *, notes_override: str = "") -> bool:
         message = update.effective_message
         chat = update.effective_chat
         user = update.effective_user
@@ -480,7 +480,7 @@ class BotHandlers:
             source_prompt=str(state["source_prompt"]),
             language_code=str(state["language_code"]),
         )
-        return await self._finalize_trip_request(update, request, notes_override=str(state["notes"]))
+        return await self._finalize_trip_request(update, request, context, notes_override=str(state["notes"]))
 
     async def _create_trip_from_text(self, update: Update, raw_text: str, context: ContextTypes.DEFAULT_TYPE | None = None) -> bool:
         message = update.effective_message
@@ -508,7 +508,7 @@ class BotHandlers:
             return True
 
         request = extraction.to_trip_request(self.planner, source_prompt=text)
-        return await self._finalize_trip_request(update, request)
+        return await self._finalize_trip_request(update, request, context)
 
     async def _should_send_group_reply(
         self,
@@ -678,8 +678,11 @@ class BotHandlers:
         await self._typing_indicator(update)
 
         try:
-            from services.weather import get_weather_for_city
-            text = await get_weather_for_city(city)
+            from services.weather import get_forecast_for_city
+            # /weather without date → show current day forecast using today's date
+            from datetime import date
+            today_iso = date.today().isoformat()
+            text = await get_forecast_for_city(city, today_iso)
             await message.reply_text(text)
         except Exception as e:
             logger.warning("Weather command failed for %r: %s", city, e)
