@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -107,7 +108,10 @@ class Database:
         
         # Migration manager
         self._migrations = create_migration_manager()
-        
+
+        # Async executor for sync DB calls
+        self._db_executor = None
+
         if not self.is_postgres:
             db_path = self._normalize_sqlite_path(dsn)
             self.dsn = db_path
@@ -134,7 +138,19 @@ class Database:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
-    
+
+    def _get_db_executor(self):
+        """Lazy init ThreadPoolExecutor for DB operations."""
+        if self._db_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+            self._db_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db")
+        return self._db_executor
+
+    async def _run(self, func, *args, **kwargs):
+        """Run a sync DB method in a thread pool."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._get_db_executor(), func, *args, **kwargs)
+
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection | psycopg.Connection, None, None]:
         """

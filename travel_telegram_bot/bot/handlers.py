@@ -122,13 +122,13 @@ class BotHandlers:
         Returns True if trip was deleted, False otherwise."""
         from bot.keyboards import trips_list_keyboard
 
-        deleted = self.db.delete_trip(chat_id, trip_id)
+        deleted = await self.db._run(self.db.delete_trip, chat_id, trip_id)
         if not deleted:
             return False
-        remaining_trips = self.db.list_trips(chat_id)
+        remaining_trips = await self.db._run(self.db.list_trips, chat_id)
         if remaining_trips:
             next_trip_id = int(remaining_trips[0]["id"])
-            self.db.activate_trip(chat_id, next_trip_id)
+            await self.db._run(self.db.activate_trip, chat_id, next_trip_id)
             if query and query.message:
                 if show_list_if_remaining:
                     await query.edit_message_text(
@@ -330,7 +330,7 @@ class BotHandlers:
         user = update.effective_user
         if not message or not chat:
             return False
-        replaced_trip = self.db.get_active_trip(chat.id) is not None
+        replaced_trip = await self.db._run(self.db.get_active_trip, chat.id) is not None
         progress_message = None
         if isinstance(self.planner, LLMTravelPlanner):
             progress_message = await message.reply_text(
@@ -381,8 +381,8 @@ class BotHandlers:
             plan,
             notes_override=notes_override,
         )
-        trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
-        self.db.set_selected_trip(chat.id, trip_id)
+        trip_id = await self.db._run(self.db.create_trip, chat.id, user.id if user else None, payload)
+        await self.db._run(self.db.set_selected_trip, chat.id, trip_id)
         await self.service._refresh_weather_for_trip(trip_id)
 
         logger.info(
@@ -538,14 +538,14 @@ class BotHandlers:
         chat = update.effective_chat
         if not chat:
             return None
-        selected_trip = self.db.get_selected_trip(chat.id)
+        selected_trip = await self.db._run(self.db.get_selected_trip, chat.id)
         if selected_trip and selected_trip.get("status") == "active":
             return selected_trip
         if selected_trip and selected_trip.get("status") != "active":
-            self.db.set_selected_trip(chat.id, None)
-        trip = self.db.get_active_trip(chat.id)
+            await self.db._run(self.db.set_selected_trip, chat.id, None)
+        trip = await self.db._run(self.db.get_active_trip, chat.id)
         if trip:
-            self.db.set_selected_trip(chat.id, int(trip["id"]))
+            await self.db._run(self.db.set_selected_trip, chat.id, int(trip["id"]))
         if not trip and update.effective_message:
             await update.effective_message.reply_text(tr(self._chat_language(chat.id), "active_trip_missing"))
         return trip
@@ -557,7 +557,7 @@ class BotHandlers:
         if not message or not chat:
             return
         self._remember_chat_member(update)
-        settings = self.db.get_or_create_settings(chat.id)
+        settings = await self.db._run(self.db.get_or_create_settings, chat.id)
         if not bool(settings.get("language_selected")):
             await message.reply_text(
                 tr("ru", "language_prompt") + "\n\n" + tr("en", "language_prompt"),
@@ -598,7 +598,7 @@ class BotHandlers:
             group_size=int(trip["group_size"] or 1),
             source_text=f"{trip['source_prompt'] or ''}\n{trip['notes'] or ''}",
         )
-        self.db.update_trip_fields(int(trip["id"]), {"tickets_text": tickets_text})
+        await self.db._run(self.db.update_trip_fields, int(trip["id"]), {"tickets_text": tickets_text})
         await update.effective_message.reply_text(tickets_text, disable_web_page_preview=True)
 
     async def hotels_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -627,7 +627,7 @@ class BotHandlers:
         chat = update.effective_chat
         if not chat:
             return
-        trips = self.db.list_trips(chat.id)
+        trips = await self.db._run(self.db.list_trips, chat.id)
         await update.effective_message.reply_text(
             self.formatter.build_trip_list_text(chat.id),
             parse_mode=ParseMode.HTML,
@@ -648,12 +648,12 @@ class BotHandlers:
         if trip_id is None:
             return
 
-        activated = self.db.activate_trip(chat.id, trip_id)
+        activated = await self.db._run(self.db.activate_trip, chat.id, trip_id)
         if not activated:
             await message.reply_text("Не удалось сделать поездку активной. Проверьте ID через /trips.")
             return
 
-        trip = self.db.get_trip_by_id(trip_id)
+        trip = await self.db._run(self.db.get_trip_by_id, trip_id)
         if trip:
             self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         await message.reply_text(f"Поездка {trip_id} снова активна.")
@@ -844,7 +844,7 @@ class BotHandlers:
         if not chat:
             await update.effective_message.reply_text("Не удалось определить чат.")
             return ConversationHandler.END
-        replaced_trip = self.db.get_active_trip(chat.id) is not None
+        replaced_trip = await self.db._run(self.db.get_active_trip, chat.id) is not None
 
         try:
             plan = await self._generate_plan(request)
@@ -857,8 +857,8 @@ class BotHandlers:
             plan,
             notes_override=notes,
         )
-        trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
-        self.db.set_selected_trip(chat.id, trip_id)
+        trip_id = await self.db._run(self.db.create_trip, chat.id, user.id if user else None, payload)
+        await self.db._run(self.db.set_selected_trip, chat.id, trip_id)
         await self.service._refresh_weather_for_trip(trip_id)
         context.user_data.pop("trip_draft", None)
 
@@ -950,9 +950,9 @@ class BotHandlers:
             return
         if context.args:
             value = " ".join(context.args).strip()
-            self.db.update_trip_fields(int(trip["id"]), {"budget_text": value})
+            await self.db._run(self.db.update_trip_fields, int(trip["id"]), {"budget_text": value})
             await self.service._rebuild_trip(int(trip["id"]))
-            trip = self.db.get_trip_by_id(int(trip["id"]))
+            trip = await self.db._run(self.db.get_trip_by_id, int(trip["id"]))
             await update.effective_message.reply_text(f"Бюджет обновлён: {value}")
         await update.effective_message.reply_text(
             f"<b>Бюджетный ориентир</b>\n{html.escape(trip['budget_breakdown_text'] or 'Оценка ещё не собрана.')}",
@@ -1017,7 +1017,7 @@ class BotHandlers:
             user_id=user.id if user else None,
             chat_id=chat.id if chat else None,
         )
-        trip = self.db.get_trip_by_id(int(trip_id))
+        trip = await self.db._run(self.db.get_trip_by_id, int(trip_id))
         if not trip or trip["status"] != "active":
             await message.reply_text("Активный план для изменения не найден.")
             return
@@ -1044,7 +1044,8 @@ class BotHandlers:
             plan,
             notes_override=trip["notes"] or "",
         )
-        self.db.update_trip_fields(
+        await self.db._run(
+            self.db.update_trip_fields,
             int(trip_id),
             payload,
         )
@@ -1076,7 +1077,7 @@ class BotHandlers:
         if pending_plan:
             await self._create_trip_from_text(update, message.text or "", context)
             return
-        settings = self.db.get_or_create_settings(chat.id)
+        settings = await self.db._run(self.db.get_or_create_settings, chat.id)
         if not self._bool_from_db(settings.get("autodraft_enabled")):
             return
         text = (message.text or "").strip()
@@ -1094,7 +1095,7 @@ class BotHandlers:
             context.chat_data["recent_group_messages"] = recent_messages
 
         signal = self._group_analyzer.analyze_messages(recent_messages)
-        active_trip = self.db.get_active_trip(chat.id)
+        active_trip = await self.db._run(self.db.get_active_trip, chat.id)
         if active_trip and any(
             [
                 signal.dates_text,
@@ -1153,7 +1154,7 @@ class BotHandlers:
                     trip_lock_key = f"_trip_lock_{trip_id}"
                     trip_lock = self._get_or_create_async_lock(context.chat_data, trip_lock_key)
                     async with trip_lock:
-                        self.db.update_trip_fields(trip_id, updates)
+                        await self.db._run(self.db.update_trip_fields, trip_id, updates)
                         try:
                             await self.service._rebuild_trip(trip_id)
                             if "dates_text" in updates:
@@ -1173,7 +1174,7 @@ class BotHandlers:
                             )
                             return
                     if await self._should_send_group_reply(context, "last_auto_update_reply", cooldown_seconds=GROUP_AUTO_UPDATE_COOLDOWN):
-                        refreshed_trip = self.db.get_trip_by_id(trip_id)
+                        refreshed_trip = await self.db._run(self.db.get_trip_by_id, trip_id)
                         if refreshed_trip:
                             await message.reply_text(
                                 self.formatter.build_group_autodraft_reply(refreshed_trip),
@@ -1206,7 +1207,7 @@ class BotHandlers:
             return
 
         if trip_id:
-            trip = self.db.get_trip_by_id(int(trip_id))
+            trip = await self.db._run(self.db.get_trip_by_id, int(trip_id))
             if trip:
                 await message.reply_text(
                     self.formatter.build_group_autodraft_reply(trip),
@@ -1227,7 +1228,7 @@ class BotHandlers:
             await query.answer("Не удалось распознать действие.", show_alert=True)
             return
 
-        trip = self.db.get_trip_by_id(trip_id)
+        trip = await self.db._run(self.db.get_trip_by_id, trip_id)
         if not trip:
             await query.answer("Эта поездка уже недоступна.", show_alert=True)
             return
@@ -1244,16 +1245,16 @@ class BotHandlers:
             chat_id=chat.id if chat else None,
         )
         if chat:
-            self.db.set_selected_trip(chat.id, trip_id)
+            await self.db._run(self.db.set_selected_trip, chat.id, trip_id)
 
         try:
             if action in {"open_trip", "delete_confirm", "delete_cancel", "delete_now"}:
                 if action == "open_trip":
-                    activated = self.db.activate_trip(int(trip["chat_id"]), trip_id)
+                    activated = await self.db._run(self.db.activate_trip, int(trip["chat_id"]), trip_id)
                     if not activated:
                         await query.answer("Не удалось открыть поездку.", show_alert=True)
                         return
-                    refreshed_trip = self.db.get_trip_by_id(trip_id)
+                    refreshed_trip = await self.db._run(self.db.get_trip_by_id, trip_id)
                     if query.message and refreshed_trip:
                         await query.message.reply_text(f"Поездка {trip_id} снова активна.")
                         await self._send_trip_summary(query.message, trip_id, trip_lang)
@@ -1389,7 +1390,7 @@ class BotHandlers:
             await update.effective_message.reply_text("Использование: /adddate 12–16 июня")
             return
         label = " ".join(context.args).strip()
-        option_id = self.db.add_date_option(int(trip["id"]), label, update.effective_user.id if update.effective_user else 0)
+        option_id = await self.db._run(self.db.add_date_option, int(trip["id"]), label, update.effective_user.id if update.effective_user else 0)
         await update.effective_message.reply_text(
             f"Добавлен вариант дат: <b>{html.escape(label)}</b>",
             parse_mode=ParseMode.HTML,
@@ -1407,12 +1408,12 @@ class BotHandlers:
             await query.answer("Не удалось распознать голосование.", show_alert=True)
             return
 
-        option = self.db.get_date_option(option_id)
+        option = await self.db._run(self.db.get_date_option, option_id)
         if not option:
             await query.answer("Вариант дат уже удалён.", show_alert=True)
             return
 
-        added, total_votes = self.db.toggle_date_vote(option_id=option_id, user_id=query.from_user.id)
+        added, total_votes = await self.db._run(self.db.toggle_date_vote, option_id=option_id, user_id=query.from_user.id)
         label = html.escape(option["label"])
         await query.answer("Голос учтён" if added else "Голос снят")
 
@@ -1431,7 +1432,7 @@ class BotHandlers:
             await update.effective_message.reply_text("Использование: /setdestination Владивосток")
             return
         value = " ".join(context.args).strip()
-        self.db.update_trip_fields(int(trip["id"]), {"destination": value})
+        await self.db._run(self.db.update_trip_fields, int(trip["id"]), {"destination": value})
         await self.service._rebuild_trip(int(trip["id"]))
         await self.service._refresh_weather_for_trip(int(trip["id"]))
         await update.effective_message.reply_text(f"Направление обновлено: {value}")
@@ -1444,7 +1445,7 @@ class BotHandlers:
             await update.effective_message.reply_text("Использование: /setdates 12–16 июня")
             return
         value = " ".join(context.args).strip()
-        self.db.update_trip_fields(int(trip["id"]), {"dates_text": value})
+        await self.db._run(self.db.update_trip_fields, int(trip["id"]), {"dates_text": value})
         await self.service._refresh_weather_for_trip(int(trip["id"]))
         await update.effective_message.reply_text(f"Даты обновлены: {value}")
 
@@ -1456,7 +1457,7 @@ class BotHandlers:
             await update.effective_message.reply_text("Использование: /interests природа, еда, история")
             return
         value = " ".join(context.args).strip()
-        self.db.update_trip_fields(int(trip["id"]), {"interests_text": value})
+        await self.db._run(self.db.update_trip_fields, int(trip["id"]), {"interests_text": value})
         await self.service._rebuild_trip(int(trip["id"]))
         await update.effective_message.reply_text(f"Интересы обновлены: {value}")
 
@@ -1469,7 +1470,7 @@ class BotHandlers:
             await update.effective_message.reply_text(f"Текущие заметки: {current}")
             return
         value = " ".join(context.args).strip()
-        self.db.update_trip_fields(int(trip["id"]), {"notes": value})
+        await self.db._run(self.db.update_trip_fields, int(trip["id"]), {"notes": value})
         await update.effective_message.reply_text("Заметки обновлены.")
 
     async def settings_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1477,7 +1478,7 @@ class BotHandlers:
         chat = update.effective_chat
         if not chat:
             return
-        settings = self.db.get_or_create_settings(chat.id)
+        settings = await self.db._run(self.db.get_or_create_settings, chat.id)
         reminders_enabled = self._bool_from_db(settings["reminders_enabled"])
         autodraft_enabled = self._bool_from_db(settings["autodraft_enabled"])
         lang = self._chat_language(chat.id)
@@ -1495,11 +1496,11 @@ class BotHandlers:
             return
         await query.answer()
         if query.data == "settings:toggle_reminders":
-            settings = self.db.toggle_reminders(chat.id)
+            settings = await self.db._run(self.db.toggle_reminders, chat.id)
         elif query.data == "settings:toggle_autodraft":
-            settings = self.db.toggle_autodraft(chat.id)
+            settings = await self.db._run(self.db.toggle_autodraft, chat.id)
         elif query.data == "settings:show_language":
-            settings = self.db.get_or_create_settings(chat.id)
+            settings = await self.db._run(self.db.get_or_create_settings, chat.id)
             lang = self._chat_language(chat.id)
             await query.edit_message_text(
                 text=tr(lang, "language_prompt"),
@@ -1528,12 +1529,12 @@ class BotHandlers:
             await query.answer(tr("ru", "language_unknown_action"), show_alert=True)
             return
         language_code = "en" if parts[2] == "en" else "ru"
-        previous_settings = self.db.get_or_create_settings(chat.id)
-        self.db.set_chat_language(chat.id, language_code)
+        previous_settings = await self.db._run(self.db.get_or_create_settings, chat.id)
+        await self.db._run(self.db.set_chat_language, chat.id, language_code)
         await query.answer(tr(language_code, "language_saved"))
         if query.message:
             if bool(previous_settings.get("language_selected")):
-                settings = self.db.get_or_create_settings(chat.id)
+                settings = await self.db._run(self.db.get_or_create_settings, chat.id)
                 await query.edit_message_text(
                     text=self.formatter.build_settings_text(chat.id),
                     parse_mode=ParseMode.HTML,
@@ -1554,9 +1555,9 @@ class BotHandlers:
         chat = update.effective_chat
         if not chat:
             return
-        archived = self.db.archive_active_trip(chat.id)
+        archived = await self.db._run(self.db.archive_active_trip, chat.id)
         if archived:
-            self.db.set_selected_trip(chat.id, None)
+            await self.db._run(self.db.set_selected_trip, chat.id, None)
             await update.effective_message.reply_text(
                 "Активная поездка переведена в архив. История сохранена, можно собирать новую через /plan или /newtrip."
             )
