@@ -100,11 +100,34 @@ def _transliterate_slug(value: str) -> str:
     return slug.strip("-")
 
 
+RU_MONTHS: dict[str, int] = {
+    "января": 1, "февраля": 2, "марта": 3, "апреля": 4,
+    "мая": 5, "июня": 6, "июля": 7, "августа": 8,
+    "сентября": 9, "октября": 10, "ноября": 11, "декабря": 12,
+}
+
+def _parse_ru_month_date(text: str) -> date | None:
+    """Parse '12 июня' or '12 июня 2026' into a date."""
+    m = re.match(r"(\d{1,2})\s+(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+(\d{4}))?", text, re.IGNORECASE)
+    if not m:
+        return None
+    day = int(m.group(1))
+    month = RU_MONTHS.get(m.group(2).lower())
+    year = int(m.group(3)) if m.group(3) else date.today().year
+    if not month:
+        return None
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
 def _parse_date_range(dates_text: str | None) -> tuple[str | None, str | None]:
     text = (dates_text or "").strip()
     if not text or text.lower() in {"не указаны", "не указано", "-"}:
         return None, None
 
+    # 12.06 - 16.06 / 12.06.2026 по 16.06.2026
     numeric_range = re.search(
         r"\b(?:с\s*)?(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s*(?:по|до|-|–|—)\s*(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\b",
         text,
@@ -112,6 +135,29 @@ def _parse_date_range(dates_text: str | None) -> tuple[str | None, str | None]:
     )
     if numeric_range:
         return _normalize_numeric_date(numeric_range.group(1)), _normalize_numeric_date(numeric_range.group(2))
+
+    # "12 июня - 16 июня" / "12 июня по 16 июня" / "с 12 июня до 16 июня"
+    ru_range = re.search(
+        r"(?:с\s+)?(\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+\d{4})?)\s*(?:по|до|-|–|—)\s*(\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+\d{4})?)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if ru_range:
+        d1 = _parse_ru_month_date(ru_range.group(1).strip())
+        d2 = _parse_ru_month_date(ru_range.group(2).strip())
+        if d1 and d2:
+            return d1.isoformat(), d2.isoformat()
+
+    # Single "12 июня"
+    ru_single = re.search(
+        r"\b(\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)(?:\s+\d{4})?)\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if ru_single:
+        d = _parse_ru_month_date(ru_single.group(1).strip())
+        if d:
+            return d.isoformat(), d.isoformat()
 
     numeric_single = re.search(r"\b(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\b", text)
     if numeric_single:
@@ -276,21 +322,24 @@ def _housing_links(
         ostrovok_params: dict[str, str] = {}
         if ostrovok_q:
             ostrovok_params["q"] = ostrovok_q
+        ostrovok_params["guests"] = str(max(1, group_size))
         if checkin_ru and checkout_ru:
             ostrovok_params["dates"] = f"{checkin_ru}-{checkout_ru}"
-            ostrovok_params["guests"] = str(max(1, group_size))
             ostrovok_params["search"] = "yes"
         ostrovok_url = f"https://ostrovok.ru/hotel/{ostrovok_path}/"
         if ostrovok_params:
             ostrovok_url += "?" + urllib.parse.urlencode(ostrovok_params)
 
-        # Sutochno: use main domain with city search param, subdomains often fail DNS
-        sutochno_url = "https://sutochno.ru/search?" + urllib.parse.urlencode({
-            "city": normalized_destination,
+        # Sutochno: use www domain with search_text param
+        sutochno_params = {
+            "search_text": normalized_destination,
             "guests": str(max(1, group_size)),
-            **({"from": start_date} if start_date else {}),
-            **({"to": end_date} if end_date else {}),
-        })
+        }
+        if start_date:
+            sutochno_params["from"] = start_date
+        if end_date:
+            sutochno_params["to"] = end_date
+        sutochno_url = "https://www.sutochno.ru/search?" + urllib.parse.urlencode(sutochno_params)
 
         yandex_params: dict[str, str] = {"adults": str(max(1, group_size))}
         if start_date:
