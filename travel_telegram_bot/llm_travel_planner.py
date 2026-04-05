@@ -23,10 +23,13 @@ class LLMTravelPlanner(TravelPlanner):
 
     def generate_plan_llm(self, request: TripRequest) -> TripPlan:
         providers = self._pool.all_providers()
+        groq_first = [p for p in providers if p.name == "Groq"]
+        others = [p for p in providers if p.name != "Groq"]
+        ordered = groq_first + others
         last_error: Exception | None = None
         metrics = get_metrics()
 
-        for provider in providers:
+        for provider in ordered:
             start = time.perf_counter()
             try:
                 logger.info("Trying LLM provider: %s", provider.name)
@@ -50,8 +53,10 @@ class LLMTravelPlanner(TravelPlanner):
 
     async def generate_plan_llm_async(self, request: TripRequest) -> TripPlan:
         providers = self._pool.all_providers()
-        primary = await self._pool.get_next()
-        ordered = [primary] + [provider for provider in providers if provider.name != primary.name]
+        # Always prefer Groq first (highest rate limit, most reliable), fallback to others
+        groq_first = [p for p in providers if p.name == "Groq"]
+        others = [p for p in providers if p.name != "Groq"]
+        ordered = groq_first + others
         last_error: Exception | None = None
         metrics = get_metrics()
 
@@ -94,10 +99,13 @@ class LLMTravelPlanner(TravelPlanner):
 
     def extract_trip_request(self, text: str, *, language_code: str = "ru") -> dict[str, object]:
         providers = self._pool.all_providers()
+        groq_first = [p for p in providers if p.name == "Groq"]
+        others = [p for p in providers if p.name != "Groq"]
+        ordered = groq_first + others
         last_error: Exception | None = None
         metrics = get_metrics()
 
-        for provider in providers:
+        for provider in ordered:
             start = time.perf_counter()
             try:
                 logger.info("Trying trip extraction provider: %s", provider.name)
@@ -134,8 +142,10 @@ class LLMTravelPlanner(TravelPlanner):
         language_code: str = "ru",
     ) -> dict[str, object]:
         providers = self._pool.all_providers()
-        primary = await self._pool.get_next()
-        ordered = [primary] + [provider for provider in providers if provider.name != primary.name]
+        # Always prefer Groq first (highest rate limit, most reliable), fallback to others
+        groq_first = [p for p in providers if p.name == "Groq"]
+        others = [p for p in providers if p.name != "Groq"]
+        ordered = groq_first + others
         last_error: Exception | None = None
         metrics = get_metrics()
 
