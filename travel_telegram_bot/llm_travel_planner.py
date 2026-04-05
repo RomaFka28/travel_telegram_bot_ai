@@ -55,9 +55,14 @@ class LLMTravelPlanner(TravelPlanner):
         last_error: Exception | None = None
         metrics = get_metrics()
 
-        for provider in ordered:
+        for i, provider in enumerate(ordered):
             start = time.perf_counter()
             try:
+                if i > 0:
+                    logger.info(
+                        "Switching to fallback LLM provider %d/%d: %s",
+                        i + 1, len(ordered), provider.name,
+                    )
                 logger.info("Trying LLM provider (async): %s", provider.name)
                 result = await asyncio.to_thread(generate_trip_plan_with_provider, provider, request)
                 duration = time.perf_counter() - start

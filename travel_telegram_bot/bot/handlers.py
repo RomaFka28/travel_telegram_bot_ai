@@ -345,17 +345,29 @@ class BotHandlers:
             chat.id, request.destination, isinstance(self.planner, LLMTravelPlanner),
         )
 
-        # Heartbeat: update progress after 15s so user knows bot is alive
+        # Heartbeat: update progress every 5s so user knows bot is alive
         async def _heartbeat():
-            await asyncio.sleep(15)
-            if progress_message:
-                try:
-                    lang = self._chat_language(chat.id)
-                    await progress_message.edit_message_text(
-                        "Ещё думаю... Подождите немного." if lang == "ru" else "Still thinking... Please wait a bit."
-                    )
-                except Exception:
-                    logger.debug("Heartbeat progress edit failed (message may be gone)")
+            messages_ru = [
+                "Всё ещё думаю... Подождите немного.",
+                "Почти готово, обрабатываю данные...",
+                "Ещё немного, собираю план поездки...",
+            ]
+            messages_en = [
+                "Still thinking... Please wait a bit.",
+                "Almost there, processing data...",
+                "Just a bit more, putting together your trip plan...",
+            ]
+            idx = 0
+            while True:
+                await asyncio.sleep(5)
+                if progress_message:
+                    try:
+                        lang = self._chat_language(chat.id)
+                        msgs = messages_ru if lang == "ru" else messages_en
+                        await progress_message.edit_message_text(msgs[idx % len(msgs)])
+                        idx += 1
+                    except Exception:
+                        logger.debug("Heartbeat progress edit failed (message may be gone)")
 
         heartbeat_task = asyncio.create_task(_heartbeat()) if progress_message else None
         try:
