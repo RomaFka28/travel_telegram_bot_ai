@@ -278,15 +278,13 @@ def _housing_links(
         if ostrovok_params:
             ostrovok_url += "?" + urllib.parse.urlencode(ostrovok_params)
 
-        if sutochno_host:
-            sutochno_params: dict[str, str] = {"guests": str(max(1, group_size))}
-            if start_date:
-                sutochno_params["from"] = start_date
-            if end_date:
-                sutochno_params["to"] = end_date
-            sutochno_url = f"https://{sutochno_host}/?" + urllib.parse.urlencode(sutochno_params)
-        else:
-            sutochno_url = "https://sutochno.ru/search?" + urllib.parse.urlencode({"city": normalized_destination})
+        # Sutochno: use main domain with city search param, subdomains often fail DNS
+        sutochno_url = "https://sutochno.ru/search?" + urllib.parse.urlencode({
+            "city": normalized_destination,
+            "guests": str(max(1, group_size)),
+            **({"from": start_date} if start_date else {}),
+            **({"to": end_date} if end_date else {}),
+        })
 
         yandex_params: dict[str, str] = {"adults": str(max(1, group_size))}
         if start_date:

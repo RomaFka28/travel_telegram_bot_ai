@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from database import Database
 from travel_locale import RouteLocale, detect_route_locale
-from travel_links import build_links_text, build_structured_link_results, detect_link_needs
+from travel_links import build_links_text, build_structured_link_results, detect_link_needs, _parse_date_range
 from travel_result_models import TravelSearchResult, serialize_needs, serialize_results, trim_results
 from travelpayouts_flights import TravelpayoutsFlightProvider
 from travel_planner import TravelPlanner
@@ -77,6 +77,9 @@ class TripService:
     def _collect_structured_results(self, request) -> tuple[list[str], dict[str, list[TravelSearchResult]], str, str]:
         context_text = f"{request.source_prompt}\n{request.notes}".strip()
         detected_needs = sorted(detect_link_needs(context_text))
+        # Housing is almost always needed for trips with multiple people
+        if request.group_size >= 2 and "housing" not in detected_needs:
+            detected_needs = sorted(detected_needs | {"housing"})
         structured = build_structured_link_results(
             request.destination,
             request.dates_text,
@@ -343,5 +346,21 @@ class TripService:
         payload = await asyncio.to_thread(self._build_trip_payload, request, plan)
         trip_id = self._db.create_trip(chat_id, created_by, payload)
         self._db.set_selected_trip(chat_id, trip_id)
+        self._auto_add_date_options(trip_id, request.dates_text, created_by)
         await self._refresh_weather_for_trip(trip_id)
         return trip_id
+
+    def _auto_add_date_options(self, trip_id: int, dates_text: str, created_by: int | None) -> None:
+        """Parse dates_text and auto-create a date option if a valid range is found."""
+        if not dates_text or dates_text in ("не указаны", "не указано"):
+            return
+        # First try numeric parsing via _parse_date_range
+        start, end = _parse_date_range(dates_text)
+        if start and end:
+            label = f"{start} — {end}"
+            self._db.add_date_option(trip_id, label, created_by or 0)
+            return
+        # Fallback: use raw dates_text if it looks like a meaningful date description
+        raw = dates_text.strip()
+        if len(raw) > 2 and raw not in ("-", "—"):
+            self._db.add_date_option(trip_id, raw, created_by or 0)

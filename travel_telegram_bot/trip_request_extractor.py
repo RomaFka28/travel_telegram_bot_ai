@@ -87,6 +87,13 @@ _INTEREST_HINTS: dict[str, tuple[str, ...]] = {
     "шопинг": ("шоп", "магазин", "рынок", "бутик"),
 }
 
+# More specific keywords, которые имеют приоритет над общими.
+# Например, "море" должен выигрывать у "природа" когда указано явно.
+_INTEREST_SPECIFIC_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "море": ("море", "пляж", "побереж"),
+    "еда": ("еда", "гастро", "ресторан", "кафе", "бар", "кофе", "кухн"),
+}
+
 
 class TripRequestExtraction(BaseModel):
     """Normalized trip-request interpretation before plan generation."""
@@ -204,14 +211,16 @@ class TripRequestExtractor:
     ) -> TripRequestExtraction:
         raw_interests = payload.get("interests")
         raw_needs = payload.get("needs")
+        explicit_interests = self._extract_explicit_interests(text)
+        # Deterministic interests have priority: if we detect "море" explicitly, keep it over LLM guesses
+        llm_interests = self._coerce_string_list(raw_interests)
+        # Start with explicit, then add LLM items that don't conflict
+        merged_interests = self._merge_interest_lists(explicit_interests, llm_interests)
         extraction = TripRequestExtraction.model_validate(
             {
                 **payload,
                 "language_code": language_code,
-                "interests": self._merge_interest_lists(
-                    self._coerce_string_list(raw_interests),
-                    self._extract_explicit_interests(text),
-                ),
+                "interests": merged_interests,
                 "needs": self._normalize_needs(self._coerce_string_list(raw_needs), text),
             }
         )
@@ -337,16 +346,45 @@ class TripRequestExtractor:
     def _extract_explicit_interests(self, text: str) -> list[str]:
         lowered = text.lower()
         result: list[str] = []
+
+        # Phase 1: detect interests by direct keyword scan (no context needed)
         for normalized, keywords in _INTEREST_HINTS.items():
             if any(keyword in lowered for keyword in keywords) and normalized not in result:
                 result.append(normalized)
 
+        # Phase 2: scan interest blocks with broader verb forms
         interest_blocks = re.findall(
-            r"(?:интересуют|люблю|нравятся|хочется)\s+([^.!?\n]+)",
+            r"(?:интересуют|люб(?:лю|им|ите)|нрав(?:ится|ятся|имся|итесь)|хочется|хотим)\s+([^.!?\n]+)",
             lowered,
             flags=re.IGNORECASE,
         )
         for block in interest_blocks:
+            for chunk in re.split(r",| и | / ", block):
+                cleaned = re.sub(r"[^a-zа-яё0-9\- ]+", "", chunk, flags=re.IGNORECASE).strip()
+                if not cleaned:
+                    continue
+                # First try specific keywords (морe, еда) to avoid them being absorbed by broader categories
+                matched_specific = False
+                for normalized, keywords in _INTEREST_SPECIFIC_KEYWORDS.items():
+                    if any(keyword in cleaned for keyword in keywords):
+                        if normalized not in result:
+                            result.append(normalized)
+                        matched_specific = True
+                        break
+                if not matched_specific:
+                    for normalized, keywords in _INTEREST_HINTS.items():
+                        if any(keyword in cleaned for keyword in keywords):
+                            if normalized not in result:
+                                result.append(normalized)
+                            break
+
+        # Phase 3: handle "любим X и Y" pattern explicitly
+        love_we_patterns = re.findall(
+            r"любим\s+([^.!?\n]+?)(?:\s*[,.]|$)",
+            lowered,
+            flags=re.IGNORECASE,
+        )
+        for block in love_we_patterns:
             for chunk in re.split(r",| и | / ", block):
                 cleaned = re.sub(r"[^a-zа-яё0-9\- ]+", "", chunk, flags=re.IGNORECASE).strip()
                 if not cleaned:
@@ -356,6 +394,7 @@ class TripRequestExtractor:
                         if normalized not in result:
                             result.append(normalized)
                         break
+
         return result
 
     @staticmethod

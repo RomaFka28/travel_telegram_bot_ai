@@ -114,7 +114,10 @@ def build_trip_plan_payload(config: OpenRouterConfig, request: TripRequest) -> d
             "Do not invent exact live prices. If exact prices are unavailable, give an honest range. "
             "Keep itinerary_text in the format 'День 1. ...\\nДень 2. ...'. "
             "budget_breakdown_text should include a detailed breakdown and a final line starting with 'Итого ориентир:'. "
-            "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека'."
+            "budget_total_text must be a single-line total such as '≈ 85 000-120 000 ₽ на человека'. "
+            "IMPORTANT: Output only human-readable travel advice in natural language. "
+            "NEVER generate Python code, function calls, import statements, or technical implementation details. "
+            "If you cannot fetch live prices, write a plain-text estimate without any code snippets."
         )
 
     user = (
