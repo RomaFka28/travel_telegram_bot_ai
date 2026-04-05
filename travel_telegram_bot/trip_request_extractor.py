@@ -120,6 +120,13 @@ class TripRequestExtraction(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     is_actionable: bool = False
 
+    def __init__(self, **data):
+        # Coerce None → "" for string fields before pydantic validation
+        for field_name in ("notes",):
+            if data.get(field_name) is None:
+                data[field_name] = ""
+        super().__init__(**data)
+
     def to_trip_request(self, planner: TravelPlanner, *, source_prompt: str) -> TripRequest:
         """Convert actionable extraction result to TripRequest."""
         if not self.destination:

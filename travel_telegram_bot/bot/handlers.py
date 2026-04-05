@@ -345,7 +345,21 @@ class BotHandlers:
             chat.id, request.destination, isinstance(self.planner, LLMTravelPlanner),
         )
 
-        plan = await self._generate_plan(request)
+        plan = None
+        try:
+            plan = await self._generate_plan(request)
+        except Exception as exc:
+            logger.warning("Plan generation failed for %s: %s", request.destination, exc)
+            if progress_message:
+                lang = self._chat_language(chat.id)
+                await progress_message.edit_message_text(
+                    "ИИ сейчас перегружен. Создаю поездку по шаблону — позже можно будет улучшить через /edit."
+                    if lang == "ru"
+                    else "AI is busy. Creating trip from template — you can improve it later via /edit."
+                )
+                progress_message = None
+            plan = await asyncio.to_thread(self.planner.generate_plan_heuristic, request)
+
         payload = await asyncio.to_thread(
             self.service._build_trip_payload,
             request,
@@ -817,7 +831,11 @@ class BotHandlers:
             return ConversationHandler.END
         replaced_trip = self.db.get_active_trip(chat.id) is not None
 
-        plan = await self._generate_plan(request)
+        try:
+            plan = await self._generate_plan(request)
+        except Exception as exc:
+            logger.warning("Plan generation failed in wizard for %s: %s", request.destination, exc)
+            plan = await asyncio.to_thread(self.planner.generate_plan_heuristic, request)
         payload = await asyncio.to_thread(
             self.service._build_trip_payload,
             request,
@@ -999,7 +1017,12 @@ class BotHandlers:
             await message.reply_text(str(exc))
             await message.reply_text("Подсказка: сначала укажите направление, например: «добавь Казань».")
             return
-        plan = await self._generate_plan(request)
+        try:
+            plan = await self._generate_plan(request)
+        except Exception as exc:
+            logger.warning("Plan generation failed in edit for %s: %s", trip.get("destination"), exc)
+            await message.reply_text("ИИ сейчас перегружен. Попробуйте повторить запрос чуть позже.")
+            return
         payload = await asyncio.to_thread(
             self.service._build_trip_payload,
             request,
