@@ -142,4 +142,5 @@ def add_translation(language_code: str, key: str, value: str) -> None:
 try:
     get_all_translations()
 except Exception:
-    pass
+    import logging
+    logging.getLogger(__name__).exception("Failed to load translations. Bot will use raw keys.")

@@ -355,7 +355,7 @@ class BotHandlers:
                         "Ещё думаю... Подождите немного." if lang == "ru" else "Still thinking... Please wait a bit."
                     )
                 except Exception:
-                    pass
+                    logger.debug("Heartbeat progress edit failed (message may be gone)")
 
         heartbeat_task = asyncio.create_task(_heartbeat()) if progress_message else None
         try:

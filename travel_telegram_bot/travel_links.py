@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.parse
 from datetime import date
@@ -10,6 +11,8 @@ from http_utils import safe_http_get
 from travel_locale import detect_route_locale
 from travel_result_models import TravelSearchResult, trim_results
 from value_normalization import normalized_search_value
+
+logger = logging.getLogger(__name__)
 
 
 CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -164,6 +167,7 @@ def _is_ru_cis_destination(destination: str, origin: str | None = None) -> bool:
     try:
         locale = detect_route_locale(normalized, origin)
     except Exception:
+        logger.debug("Route locale detection failed for %r (origin=%r)", normalized, origin)
         return False
     return bool(getattr(locale, "is_ru_cis_destination", False))
 
@@ -229,6 +233,7 @@ def _resolve_iata_code(term: str | None) -> str:
         raw = safe_http_get(url, max_retries=HTTP_IATA_MAX_RETRIES, timeout=HTTP_IATA_TIMEOUT)
         payload = json.loads(raw.decode("utf-8", errors="replace"))
     except Exception:
+        logger.debug("IATA lookup failed for %r", normalized)
         return ""
     if not isinstance(payload, list):
         return ""
