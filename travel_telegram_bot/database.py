@@ -401,11 +401,13 @@ class Database:
                     try:
                         return self._rows_to_dicts(cur.fetchall())
                     except Exception:
+                        logger.exception("_q failed on PostgreSQL query: sql=%r params=%r", sql, params)
                         return None
             cur = conn.execute(sql, params)
             try:
                 return self._rows_to_dicts(cur.fetchall())
             except Exception:
+                logger.exception("_q failed on SQLite query: sql=%r params=%r", sql, params)
                 return None
 
     def get_or_create_settings(self, chat_id: int) -> dict[str, Any]:

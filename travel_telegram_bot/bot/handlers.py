@@ -81,6 +81,31 @@ class BotHandlers:
             chat_data[lock_key] = asyncio.Lock()
         return chat_data[lock_key]
 
+    async def _generate_plan(self, request):
+        """Generate a trip plan using the appropriate planner (LLM or heuristic)."""
+        if isinstance(self.planner, LLMTravelPlanner):
+            return await self.planner.generate_plan_async(request)
+        return await asyncio.to_thread(self.planner.generate_plan, request)
+
+    async def _send_trip_summary(self, message, trip_id: int, lang: str):
+        """Send a formatted trip summary message via reply."""
+        await message.reply_text(
+            self.formatter._build_summary_html(trip_id),
+            parse_mode=ParseMode.HTML,
+            reply_markup=trip_summary_keyboard(trip_id, lang),
+            disable_web_page_preview=True,
+        )
+
+    async def _edit_message_to_summary(self, query, trip_id: int, lang: str):
+        """Edit an existing callback message to show trip summary."""
+        if query.message:
+            await query.edit_message_text(
+                self.formatter._build_summary_html(trip_id),
+                parse_mode=ParseMode.HTML,
+                reply_markup=trip_summary_keyboard(trip_id, lang),
+                disable_web_page_preview=True,
+            )
+
     @staticmethod
     def _display_name(update: Update) -> str:
         user = update.effective_user
@@ -341,11 +366,8 @@ class BotHandlers:
             "trip_generation_start chat_id=%s destination=%s llm=%s",
             chat.id, request.destination, isinstance(self.planner, LLMTravelPlanner),
         )
-        
-        if isinstance(self.planner, LLMTravelPlanner):
-            plan = await self.planner.generate_plan_async(request)
-        else:
-            plan = await asyncio.to_thread(self.planner.generate_plan, request)
+
+        plan = await self._generate_plan(request)
         payload = await asyncio.to_thread(
             self.service._build_trip_payload,
             request,
@@ -355,19 +377,18 @@ class BotHandlers:
         trip_id = self.db.create_trip(chat.id, user.id if user else None, payload)
         self.db.set_selected_trip(chat.id, trip_id)
         await self.service._refresh_weather_for_trip(trip_id)
-        
+
         logger.info(
             "trip_created trip_id=%s chat_id=%s replaced=%s",
             trip_id, chat.id, replaced_trip,
         )
 
-        summary_text = self.formatter._build_summary_html(trip_id)
-        summary_keyboard = trip_summary_keyboard(trip_id, self._chat_language(chat.id))
+        await self._send_trip_summary(message, trip_id, self._chat_language(chat.id))
         replaced_status_message = await self._replace_or_remove_progress_message(
             progress_message,
-            summary_text,
+            self.formatter._build_summary_html(trip_id),
             parse_mode=ParseMode.HTML,
-            reply_markup=summary_keyboard,
+            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
             disable_web_page_preview=True,
         )
         if not replaced_status_message:
@@ -378,12 +399,7 @@ class BotHandlers:
                     language_code=self._chat_language(chat.id),
                 )
             )
-            await message.reply_text(
-                summary_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=summary_keyboard,
-                disable_web_page_preview=True,
-            )
+            await self._send_trip_summary(message, trip_id, self._chat_language(chat.id))
         entry_notice = self.formatter.build_entry_notice_text(trip_id)
         if entry_notice:
             await message.reply_text(entry_notice)
@@ -633,12 +649,7 @@ class BotHandlers:
         if trip:
             self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         await message.reply_text(f"Поездка {trip_id} снова активна.")
-        await message.reply_text(
-            self.formatter._build_summary_html(trip_id),
-            parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
-            disable_web_page_preview=True,
-        )
+        await self._send_trip_summary(message, trip_id, self._chat_language(chat.id))
 
     async def plan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
@@ -789,17 +800,23 @@ class BotHandlers:
         lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
 
         try:
+            origin_default = "not specified" if lang == "en" else "не указано"
+            dates_default = "not specified" if lang == "en" else "не указаны"
+            budget_default = "Business" if lang == "en" else "Бизнес"
+            interests_default = "city, food" if lang == "en" else "город, еда"
+            brief_label = "New brief" if lang == "en" else "Новый бриф"
+            days_label = "days" if lang == "en" else "дн"
             request = self.planner.build_request_from_fields(
                 title=draft.get("title", ""),
                 destination=draft.get("destination", ""),
-                origin=draft.get("origin", "не указано"),
-                dates_text=draft.get("dates_text", "не указаны"),
+                origin=draft.get("origin", origin_default),
+                dates_text=draft.get("dates_text", dates_default),
                 days_count=int(draft.get("days_count", 3)),
                 group_size=int(draft.get("group_size", 2)),
-                budget_text=draft.get("budget_text", "Бизнес"),
-                interests_text=draft.get("interests_text", "город, еда"),
+                budget_text=draft.get("budget_text", budget_default),
+                interests_text=draft.get("interests_text", interests_default),
                 notes=notes,
-                source_prompt=truncate_source_prompt(f"Новый бриф: {draft.get('destination', '')}, {draft.get('days_count', 3)} дн."),
+                source_prompt=truncate_source_prompt(f"{brief_label}: {draft.get('destination', '')}, {draft.get('days_count', 3)} {days_label}."),
                 language_code=lang,
             )
         except ValueError as exc:
@@ -835,12 +852,7 @@ class BotHandlers:
                 language_code=self._chat_language(chat.id),
             )
         )
-        await update.effective_message.reply_text(
-            self.formatter._build_summary_html(trip_id),
-            parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(trip_id, self._chat_language(chat.id)),
-            disable_web_page_preview=True,
-        )
+        await self._send_trip_summary(update.effective_message, trip_id, self._chat_language(chat.id))
         entry_notice = self.formatter.build_entry_notice_text(trip_id)
         if entry_notice:
             await update.effective_message.reply_text(entry_notice)
@@ -865,11 +877,8 @@ class BotHandlers:
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         if not (trip["weather_text"] or "").strip():
             await self.service._refresh_weather_for_trip(int(trip["id"]))
-        await update.effective_message.reply_text(
-            self.formatter._build_summary_html(int(trip["id"])),
-            parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(int(trip["id"]), self._chat_language(int(trip["chat_id"]))),
-            disable_web_page_preview=True,
+        await self._send_trip_summary(
+            update.effective_message, int(trip["id"]), self._chat_language(int(trip["chat_id"]))
         )
 
     async def brief_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1005,10 +1014,7 @@ class BotHandlers:
             await message.reply_text(str(exc))
             await message.reply_text("Подсказка: сначала укажите направление, например: «добавь Казань».")
             return
-        if isinstance(self.planner, LLMTravelPlanner):
-            plan = await self.planner.generate_plan_async(request)
-        else:
-            plan = await asyncio.to_thread(self.planner.generate_plan, request)
+        plan = await self._generate_plan(request)
         payload = await asyncio.to_thread(
             self.service._build_trip_payload,
             request,
@@ -1021,12 +1027,7 @@ class BotHandlers:
         )
         await self.service._refresh_weather_for_trip(int(trip_id))
         await message.reply_text("План обновлён.")
-        await message.reply_text(
-            self.formatter._build_summary_html(int(trip_id)),
-            parse_mode=ParseMode.HTML,
-            reply_markup=trip_summary_keyboard(int(trip_id), self._chat_language(int(trip["chat_id"]))),
-            disable_web_page_preview=True,
-        )
+        await self._send_trip_summary(message, int(trip_id), self._chat_language(int(trip["chat_id"])))
         entry_notice = self.formatter.build_entry_notice_text(int(trip_id))
         if entry_notice:
             await message.reply_text(entry_notice)
@@ -1596,14 +1597,12 @@ class BotHandlers:
             if remaining_trips:
                 next_trip_id = int(remaining_trips[0]["id"])
                 self.db.activate_trip(chat.id, next_trip_id)
-                await message.reply_text("Поездку удалил. Ниже открыл следующую доступную поездку.")
                 await message.reply_text(
                     self.formatter._build_summary_html(next_trip_id),
                     parse_mode=ParseMode.HTML,
                     reply_markup=trip_summary_keyboard(next_trip_id, self._chat_language(chat.id)),
                     disable_web_page_preview=True,
                 )
-                await message.reply_text("Поездка удалена. Ниже открыл следующую доступную поездку.")
             else:
                 await message.reply_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
         else:
