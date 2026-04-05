@@ -44,9 +44,9 @@ from housing_search import HousingSearchProvider
 from i18n import tr
 from llm_travel_planner import LLMTravelPlanner
 from rate_limiter import get_llm_limiter
+from travel_planner import TripPlan, TravelPlanner
 from trip_request_extractor import TripRequestExtraction, TripRequestExtractor
 from travelpayouts_flights import TravelpayoutsFlightProvider
-from travel_planner import TravelPlanner
 from travel_result_models import deserialize_needs
 from value_normalization import truncate_source_prompt
 
@@ -92,13 +92,13 @@ class BotHandlers:
             chat_data[lock_key] = asyncio.Lock()
         return chat_data[lock_key]
 
-    async def _generate_plan(self, request):
+    async def _generate_plan(self, request) -> "TripPlan":
         """Generate a trip plan using the appropriate planner (LLM or heuristic)."""
         if isinstance(self.planner, LLMTravelPlanner):
             return await self.planner.generate_plan_async(request)
         return await asyncio.to_thread(self.planner.generate_plan, request)
 
-    async def _send_trip_summary(self, message, trip_id: int, lang: str):
+    async def _send_trip_summary(self, message: Message, trip_id: int, lang: str) -> None:
         """Send a formatted trip summary message via reply."""
         await message.reply_text(
             self.formatter._build_summary_html(trip_id),
@@ -107,7 +107,7 @@ class BotHandlers:
             disable_web_page_preview=True,
         )
 
-    async def _edit_message_to_summary(self, query, trip_id: int, lang: str):
+    async def _edit_message_to_summary(self, query, trip_id: int, lang: str) -> None:
         """Edit an existing callback message to show trip summary."""
         if query.message:
             await query.edit_message_text(
@@ -254,70 +254,6 @@ class BotHandlers:
     @staticmethod
     def _build_plan_prompt_text(language_code: str = "ru") -> str:
         return tr(language_code, "plan_prompt")
-
-    @staticmethod
-    def _has_explicit_dates(text: str) -> bool:
-        lowered = (text or "").lower()
-        return bool(re.search(r"\b\d{1,2}[./-]\d{1,2}\b", lowered) or any(month in lowered for month in (
-            "январ", "феврал", "март", "апрел", "мая", "май", "июн", "июл", "август", "сентябр", "октябр", "ноябр", "декабр"
-        )))
-
-    @staticmethod
-    def _has_explicit_origin(text: str) -> bool:
-        lowered = (text or "").lower()
-        triggers = ("вылет из", "лечу из", "старт из", "из ")
-        return any(trigger in lowered for trigger in triggers)
-
-    @staticmethod
-    def _has_explicit_route_type(text: str) -> bool:
-        lowered = (text or "").lower()
-        triggers = ("в одну сторону", "без обратного", "только туда", "туда-обратно", "обратно", "one way", "round trip")
-        return any(trigger in lowered for trigger in triggers)
-
-    @staticmethod
-    def _needs_route_followup(text: str) -> bool:
-        lowered = (text or "").lower()
-        triggers = ("вылет", "билет", "перелет", "перелёт", "рейс", "лететь", "one way", "round trip", "в одну сторону", "туда-обратно")
-        return any(trigger in lowered for trigger in triggers)
-
-    @staticmethod
-    def _normalize_interest_phrase(value: str) -> str:
-        cleaned = re.sub(r"\s+", " ", (value or "").strip(" .,!?:;\"'«»")).lower()
-        aliases = {
-            "еду": "еда",
-            "еда": "еда",
-            "прогулки": "прогулки",
-            "прогулок": "прогулки",
-            "прогулка": "прогулки",
-            "гулять": "прогулки",
-        }
-        return aliases.get(cleaned, cleaned)
-
-    @classmethod
-    def _merge_explicit_interests(cls, raw_text: str, parsed_interests: list[str]) -> list[str]:
-        merged: list[str] = []
-        seen: set[str] = set()
-        for interest in parsed_interests:
-            normalized = cls._normalize_interest_phrase(interest)
-            if normalized and normalized not in seen:
-                merged.append(normalized)
-                seen.add(normalized)
-
-        patterns = (
-            r"(?:интерес(?:ует|уют)\s+)([^.!?\n]+)",
-            r"(?:люблю|любим|нравится|нравятся)\s+([^.!?\n]+)",
-        )
-        for pattern in patterns:
-            for match in re.finditer(pattern, raw_text or "", flags=re.IGNORECASE):
-                chunk = match.group(1)
-                parts = re.split(r",|/|;|\s+\bи\b\s+", chunk, flags=re.IGNORECASE)
-                for part in parts:
-                    normalized = cls._normalize_interest_phrase(part)
-                    if not normalized or normalized in {"меня", "нас"} or normalized in seen:
-                        continue
-                    merged.append(normalized)
-                    seen.add(normalized)
-        return merged
 
     def _build_plan_followup_state(
         self,
@@ -880,10 +816,7 @@ class BotHandlers:
             return ConversationHandler.END
         replaced_trip = self.db.get_active_trip(chat.id) is not None
 
-        if isinstance(self.planner, LLMTravelPlanner):
-            plan = await self.planner.generate_plan_async(request)
-        else:
-            plan = await asyncio.to_thread(self.planner.generate_plan, request)
+        plan = await self._generate_plan(request)
         payload = await asyncio.to_thread(
             self.service._build_trip_payload,
             request,
@@ -932,6 +865,7 @@ class BotHandlers:
         )
 
     async def brief_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self._remember_chat_member(update)
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
@@ -1570,9 +1504,10 @@ class BotHandlers:
                     ),
                 )
             else:
+                start_text = self.formatter.build_start_text_for_language(language_code)
                 await query.edit_message_text(
-                    text=self.formatter.build_start_text_for_language(language_code),
-                    parse_mode=ParseMode.HTML if "<b>" in self.formatter.build_start_text_for_language(language_code) else None,
+                    text=start_text,
+                    parse_mode=ParseMode.HTML if "<b>" in start_text else None,
                 )
 
     async def archive_trip_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
