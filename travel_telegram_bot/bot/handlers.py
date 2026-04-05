@@ -28,6 +28,17 @@ from bot.keyboards import (
     trip_skip_keyboard,
 )
 from bot.trip_service import TripService
+from config import (
+    GROUP_AUTO_DRAFT_ERROR_COOLDOWN,
+    GROUP_AUTO_UPDATE_COOLDOWN,
+    GROUP_CLARIFY_COOLDOWN,
+    GROUP_REPLY_COOLDOWN,
+    MAX_GROUP_SIZE,
+    MAX_RECENT_MESSAGES,
+    MAX_TRIP_DAYS,
+    MIN_TEXT_LENGTH_FOR_AUTO_PLAN,
+    MIN_TRIP_DAYS,
+)
 from database import Database
 from housing_search import HousingSearchProvider
 from i18n import tr
@@ -764,9 +775,13 @@ class BotHandlers:
     async def new_trip_days(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         raw_value = (update.effective_message.text or "").strip()
         try:
-            days_count = max(1, min(int(raw_value), 14))
+            days_count = max(MIN_TRIP_DAYS, min(int(raw_value), MAX_TRIP_DAYS))
         except ValueError:
-            await update.effective_message.reply_text("Please enter a number from 1 to 14. For example: 5" if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en" else "Нужно число от 1 до 14. Например: 5")
+            await update.effective_message.reply_text(
+                f"Please enter a number from {MIN_TRIP_DAYS} to {MAX_TRIP_DAYS}. For example: 5"
+                if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en"
+                else f"Нужно число от {MIN_TRIP_DAYS} до {MAX_TRIP_DAYS}. Например: 5"
+            )
             return NEW_TRIP_DAYS
         context.user_data.setdefault("trip_draft", {})["days_count"] = days_count
         lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
@@ -790,9 +805,13 @@ class BotHandlers:
     async def new_trip_group_size(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         raw_value = (update.effective_message.text or "").strip()
         try:
-            group_size = max(1, min(int(raw_value), 20))
+            group_size = max(MIN_GROUP_SIZE, min(int(raw_value), MAX_GROUP_SIZE))
         except ValueError:
-            await update.effective_message.reply_text("Please enter a number from 1 to 20. For example: 4" if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en" else "Нужно число от 1 до 20. Например: 4")
+            await update.effective_message.reply_text(
+                f"Please enter a number from {MIN_GROUP_SIZE} to {MAX_GROUP_SIZE}. For example: 4"
+                if self._chat_language(update.effective_chat.id if update.effective_chat else None) == "en"
+                else f"Нужно число от {MIN_GROUP_SIZE} до {MAX_GROUP_SIZE}. Например: 4"
+            )
             return NEW_TRIP_GROUP_SIZE
         context.user_data.setdefault("trip_draft", {})["group_size"] = group_size
         lang = self._chat_language(update.effective_chat.id if update.effective_chat else None)
@@ -1088,7 +1107,7 @@ class BotHandlers:
         if not self._bool_from_db(settings.get("autodraft_enabled")):
             return
         text = (message.text or "").strip()
-        if len(text) < 15:
+        if len(text) < MIN_TEXT_LENGTH_FOR_AUTO_PLAN:
             return
 
         list_lock_key = "_lock_recent_messages"
@@ -1098,7 +1117,7 @@ class BotHandlers:
             if not isinstance(recent_messages, list):
                 recent_messages = []
             recent_messages.append(text)
-            recent_messages = recent_messages[-8:]
+            recent_messages = recent_messages[-MAX_RECENT_MESSAGES:]
             context.chat_data["recent_group_messages"] = recent_messages
 
         signal = self._group_analyzer.analyze_messages(recent_messages)
@@ -1122,7 +1141,7 @@ class BotHandlers:
 
         if not signal.destination:
             if signal.destination_votes:
-                if await self._should_send_group_reply(context, "last_destination_vote_reply", cooldown_seconds=600):
+                if await self._should_send_group_reply(context, "last_destination_vote_reply", cooldown_seconds=GROUP_REPLY_COOLDOWN):
                     await message.reply_text(
                         self.formatter.build_group_destination_vote_text(
                             signal.destination_votes,
@@ -1130,7 +1149,7 @@ class BotHandlers:
                         ),
                         parse_mode=ParseMode.HTML,
                     )
-            elif await self._should_send_group_reply(context, "last_clarify_reply", cooldown_seconds=600):
+            elif await self._should_send_group_reply(context, "last_clarify_reply", cooldown_seconds=GROUP_REPLY_COOLDOWN):
                 await message.reply_text(
                     self.formatter.build_group_clarifying_question(self._chat_language(chat.id))
                 )
@@ -1180,7 +1199,7 @@ class BotHandlers:
                                 "Не удалось обновить поездку автоматически. Попробуйте повторить сообщение чуть позже."
                             )
                             return
-                    if await self._should_send_group_reply(context, "last_auto_update_reply", cooldown_seconds=420):
+                    if await self._should_send_group_reply(context, "last_auto_update_reply", cooldown_seconds=GROUP_AUTO_UPDATE_COOLDOWN):
                         refreshed_trip = self.db.get_trip_by_id(trip_id)
                         if refreshed_trip:
                             await message.reply_text(
@@ -1190,7 +1209,7 @@ class BotHandlers:
                             )
             return
 
-        if not await self._should_send_group_reply(context, "last_auto_reply", cooldown_seconds=420):
+        if not await self._should_send_group_reply(context, "last_auto_reply", cooldown_seconds=GROUP_AUTO_UPDATE_COOLDOWN):
             return
 
         try:
@@ -1207,7 +1226,7 @@ class BotHandlers:
                 user.id if user else None,
                 signal.destination,
             )
-            if await self._should_send_group_reply(context, "last_auto_draft_error_reply", cooldown_seconds=600):
+            if await self._should_send_group_reply(context, "last_auto_draft_error_reply", cooldown_seconds=GROUP_REPLY_COOLDOWN):
                 await message.reply_text(
                     "Не удалось создать поездку автоматически. Попробуйте начать через /plan или /newtrip."
                 )

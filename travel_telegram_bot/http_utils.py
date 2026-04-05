@@ -13,6 +13,8 @@ import logging
 import time
 import urllib.error
 import urllib.request
+
+from config import HTTP_DEFAULT_MAX_RETRIES, HTTP_DEFAULT_TIMEOUT
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -30,8 +32,8 @@ class HTTPRetryError(Exception):
 def http_request_with_retry(
     url: str | urllib.request.Request,
     *,
-    max_retries: int = 3,
-    timeout: int = 30,
+    max_retries: int = HTTP_DEFAULT_MAX_RETRIES,
+    timeout: int = HTTP_DEFAULT_TIMEOUT,
     backoff_factor: float = 1.0,
     retryable_status_codes: set[int] | None = None,
     data: bytes | None = None,
@@ -176,8 +178,8 @@ def safe_http_get(
     url: str,
     *,
     params: dict[str, str] | None = None,
-    max_retries: int = 3,
-    timeout: int = 30,
+    max_retries: int = HTTP_DEFAULT_MAX_RETRIES,
+    timeout: int = HTTP_DEFAULT_TIMEOUT,
     headers: dict[str, str] | None = None,
 ) -> bytes:
     """
@@ -218,8 +220,8 @@ def safe_http_post(
     *,
     data: bytes,
     content_type: str = "application/json",
-    max_retries: int = 3,
-    timeout: int = 30,
+    max_retries: int = HTTP_DEFAULT_MAX_RETRIES,
+    timeout: int = HTTP_DEFAULT_TIMEOUT,
     headers: dict[str, str] | None = None,
 ) -> bytes:
     """

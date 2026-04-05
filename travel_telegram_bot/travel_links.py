@@ -5,6 +5,7 @@ import re
 import urllib.parse
 from datetime import date
 
+from config import HTTP_IATA_MAX_RETRIES, HTTP_IATA_TIMEOUT
 from http_utils import safe_http_get
 from travel_locale import detect_route_locale
 from travel_result_models import TravelSearchResult, trim_results
@@ -225,7 +226,7 @@ def _resolve_iata_code(term: str | None) -> str:
     ]
     url = "https://autocomplete.travelpayouts.com/places2?" + urllib.parse.urlencode(params)
     try:
-        raw = safe_http_get(url, max_retries=2, timeout=8)
+        raw = safe_http_get(url, max_retries=HTTP_IATA_MAX_RETRIES, timeout=HTTP_IATA_TIMEOUT)
         payload = json.loads(raw.decode("utf-8", errors="replace"))
     except Exception:
         return ""

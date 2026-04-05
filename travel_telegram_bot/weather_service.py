@@ -6,6 +6,7 @@ import urllib.parse
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from config import HTTP_WEATHER_MAX_RETRIES, HTTP_WEATHER_TIMEOUT
 from date_utils import parse_dates_range
 from http_utils import safe_http_get
 
@@ -35,7 +36,7 @@ def geocode_city(name: str) -> GeoResult | None:
     }
     url = "https://geocoding-api.open-meteo.com/v1/search?" + urllib.parse.urlencode(params)
     try:
-        raw = safe_http_get(url, max_retries=2, timeout=20)
+        raw = safe_http_get(url, max_retries=HTTP_WEATHER_MAX_RETRIES, timeout=HTTP_WEATHER_TIMEOUT)
         raw_str = raw.decode("utf-8", errors="replace")
     except Exception as exc:
         raise WeatherError(f"Geocoding error: {exc}") from exc
@@ -95,7 +96,7 @@ def fetch_weather_summary(destination: str, dates_text: str) -> str | None:
     url = "https://api.open-meteo.com/v1/forecast?" + urllib.parse.urlencode(params)
 
     try:
-        raw = safe_http_get(url, max_retries=2, timeout=20)
+        raw = safe_http_get(url, max_retries=HTTP_WEATHER_MAX_RETRIES, timeout=HTTP_WEATHER_TIMEOUT)
         raw_str = raw.decode("utf-8", errors="replace")
     except Exception as exc:
         raise WeatherError(f"Forecast error: {exc}") from exc
