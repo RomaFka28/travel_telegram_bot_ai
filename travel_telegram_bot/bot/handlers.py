@@ -662,6 +662,29 @@ class BotHandlers:
             reply_markup=trips_list_keyboard(trips, self._chat_language(chat.id)) if trips else None,
         )
 
+    async def weather_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Команда /weather — погода в городе."""
+        self._remember_chat_member(update)
+        message = update.effective_message
+        if not message:
+            return
+
+        city = " ".join(context.args).strip() if context.args else ""
+        if not city:
+            await message.reply_text("Укажи город: /weather Томск")
+            return
+
+        # Check for typing indicator
+        await self._typing_indicator(update)
+
+        try:
+            from services.weather import get_weather_for_city
+            text = await get_weather_for_city(city)
+            await message.reply_text(text)
+        except Exception as e:
+            logger.warning("Weather command failed for %r: %s", city, e)
+            await message.reply_text("❌ Сервис погоды временно недоступен.")
+
     async def select_trip_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._remember_chat_member(update)
         chat = update.effective_chat

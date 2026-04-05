@@ -70,6 +70,7 @@ async def post_init(application) -> None:
         BotCommand("participants", "Статусы участников"),
         BotCommand("adddate", "Добавить вариант дат"),
         BotCommand("archive_trip", "Убрать активную поездку в архив"),
+        BotCommand("weather", "Погода в городе назначения"),
     ]
     await application.bot.set_my_commands(commands)
 
@@ -201,6 +202,7 @@ def build_application():
     app.add_handler(CommandHandler("notes", handlers.notes_command))
     app.add_handler(CommandHandler("settings", handlers.settings_command))
     app.add_handler(CommandHandler("archive_trip", handlers.archive_trip_command))
+    app.add_handler(CommandHandler("weather", handlers.weather_command))
 
     app.add_handler(
         MessageHandler(

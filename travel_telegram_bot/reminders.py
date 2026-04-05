@@ -63,20 +63,26 @@ def _calc_reminder_date(start_date: date, end_date: date | None, days_offset: in
     return ref_date + timedelta(days=days_offset)
 
 
-def _format_reminder_text(trip_title: str, destination: str, reminder_type: str, start_date: date, end_date: date | None, lang: str) -> str:
+def _format_reminder_text(
+    trip_title: str, destination: str, reminder_type: str,
+    start_date: date, end_date: date | None, lang: str,
+    *, weather_text: str = "",
+) -> str:
     """Сформировать текст напоминания."""
     days_left = (start_date - date.today()).days
 
+    weather_block = f"\n\n{weather_text}" if weather_text else ""
+
     messages_ru = {
-        "pre_3d": f"⏰ Напоминание: через 3 дня поездка «{trip_title}» в {destination}!\n\n📋 Чек-лист:\n• Проверьте билеты и брони жилья\n• Подтвердите документы/загранпаспорта\n• Сохраните скриншоты бронирований\n\n📅 Вылет: {start_date.strftime('%d.%m.%Y')}\n📍 {destination} • {days_left} дн.",
-        "pre_1d": f"🧳 Завтра вылет в {destination}!\n\nНе забудьте:\n• Документы (паспорт, загран)\n• Билеты и брони (скриншоты)\n• Зарядки и адаптеры\n• Лекарства\n\n✈️ Вылет: {start_date.strftime('%d.%m.%Y')}\n🏨 Проживание: {'забронировано' if end_date else 'проверьте ссылки из плана'}\n\n📍 /summary — полный план поездки",
+        "pre_3d": f"⏰ Напоминание: через 3 дня поездка «{trip_title}» в {destination}!\n\n📋 Чек-лист:\n• Проверьте билеты и брони жилья\n• Подтвердите документы/загранпаспорта\n• Сохраните скриншоты бронирований\n\n📅 Вылет: {start_date.strftime('%d.%m.%Y')}\n📍 {destination} • {days_left} дн.{weather_block}",
+        "pre_1d": f"🧳 Завтра вылет в {destination}!\n\nНе забудьте:\n• Документы (паспорт, загран)\n• Билеты и брони (скриншоты)\n• Зарядки и адаптеры\n• Лекарства\n\n✈️ Вылет: {start_date.strftime('%d.%m.%Y')}\n🏨 Проживание: {'забронировано' if end_date else 'проверьте ссылки из плана'}\n\n📍 /summary — полный план поездки{weather_block}",
         "return_day": f"🏠 Сегодня возвращаетесь из {destination}!\n\n📅 Возврат: {end_date.strftime('%d.%m.%Y') if end_date else 'сегодня'}\n\nНе забудьте:\n• Чекины в отеле\n• Сувениры\n• Проверить ничего ли не забыли\n\nКак доберётесь — отметьте статус через /status",
         "post_1d": f"📝 Надеемся, поездка в {destination} прошла отлично!\n\nРасскажите как всё прошло:\n• /status — обновите свой ответ\n• /summary — посмотрите итоговый план\n• /trips — история поездок\n\nЕсли хотите спланировать следующую — /plan ✈️",
     }
 
     messages_en = {
-        "pre_3d": f"⏰ Reminder: 3 days until \"{trip_title}\" to {destination}!\n\n📋 Checklist:\n• Check flights and accommodation\n• Confirm documents/passports\n• Save booking screenshots\n\n📅 Departure: {start_date.strftime('%d.%m.%Y')}\n📍 {destination} • {days_left} days",
-        "pre_1d": f"🧳 Tomorrow: flight to {destination}!\n\nDon't forget:\n• Documents (passport)\n• Tickets and bookings (screenshots)\n• Chargers and adapters\n• Medications\n\n✈️ Departure: {start_date.strftime('%d.%m.%Y')}\n📍 /summary — full trip plan",
+        "pre_3d": f"⏰ Reminder: 3 days until \"{trip_title}\" to {destination}!\n\n📋 Checklist:\n• Check flights and accommodation\n• Confirm documents/passports\n• Save booking screenshots\n\n📅 Departure: {start_date.strftime('%d.%m.%Y')}\n📍 {destination} • {days_left} days{weather_block}",
+        "pre_1d": f"🧳 Tomorrow: flight to {destination}!\n\nDon't forget:\n• Documents (passport)\n• Tickets and bookings (screenshots)\n• Chargers and adapters\n• Medications\n\n✈️ Departure: {start_date.strftime('%d.%m.%Y')}\n📍 /summary — full trip plan{weather_block}",
         "return_day": f"🏠 Heading back from {destination} today!\n\n📅 Return: {end_date.strftime('%d.%m.%Y') if end_date else 'today'}\n\nDon't forget:\n• Hotel checkout\n• Souvenirs\n• Double-check you haven't left anything behind\n\nUse /status to update your reply when you're back",
         "post_1d": f"📝 Hope your trip to {destination} was great!\n\nShare how it went:\n• /status — update your reply\n• /summary — view the final plan\n• /trips — trip history\n\nWant to plan the next one? /plan ✈️",
     }
@@ -118,6 +124,15 @@ async def schedule_trip_reminders(
     if start_date < today:
         return []
 
+    # Fetch weather for destination to include in reminders
+    weather_text = ""
+    try:
+        from services.weather import get_weather_for_city
+        weather_text = await get_weather_for_city(destination)
+    except Exception as e:
+        logger.debug("Weather fetch for reminders failed for %r: %s", destination, e)
+        weather_text = ""
+
     scheduled = []
     for reminder_type, config in REMINDER_TYPES.items():
         reminder_date = _calc_reminder_date(start_date, end_date, config["days_offset"], config.get("ref", "start"))
@@ -126,10 +141,10 @@ async def schedule_trip_reminders(
         if reminder_date < today:
             continue
 
-        # Schedule at 10:00 local-ish (use UTC for simplicity)
-        reminder_datetime = datetime.combine(reminder_date, time(10, 0), tzinfo=timezone.utc)
-
-        text = _format_reminder_text(trip_title, destination, reminder_type, start_date, end_date, lang)
+        text = _format_reminder_text(
+            trip_title, destination, reminder_type, start_date, end_date, lang,
+            weather_text=weather_text,
+        )
 
         try:
             await bot.send_message(
