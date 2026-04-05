@@ -70,11 +70,11 @@ def trips_list_keyboard(trips: list[dict], language_code: str = "ru") -> InlineK
 
 def settings_keyboard(reminders_enabled: bool, autodraft_enabled: bool, language_code: str = "ru") -> InlineKeyboardMarkup:
     reminders_label = tr(language_code, "settings_button_reminders_on") if reminders_enabled else tr(language_code, "settings_button_reminders_off")
-    autodraft_label = tr(language_code, "settings_button_autodraft_on") if autodraft_enabled else tr(language_code, "settings_button_autodraft_off")
+    chat_label = tr(language_code, "settings_button_chat_on") if autodraft_enabled else tr(language_code, "settings_button_chat_off")
     return InlineKeyboardMarkup(
         [
             [InlineKeyboardButton(text=reminders_label, callback_data="settings:toggle_reminders")],
-            [InlineKeyboardButton(text=autodraft_label, callback_data="settings:toggle_autodraft")],
+            [InlineKeyboardButton(text=chat_label, callback_data="settings:toggle_autodraft")],
             [InlineKeyboardButton(text=tr(language_code, "settings_button_language", language=tr(language_code, "language_name")), callback_data="settings:show_language")],
         ]
     )
