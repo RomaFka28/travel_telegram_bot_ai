@@ -646,6 +646,22 @@ def build_structured_link_results(
         for label, url in items:
             if category == "housing":
                 price_text, style, score = _estimate_housing_result(destination, label, group_size, budget_text, context_text)
+                # Calculate total nights from dates_text
+                h_start, h_end = _parse_date_range(dates_text)
+                total_nights = None
+                if h_start and h_end:
+                    try:
+                        total_nights = (date.fromisoformat(h_end) - date.fromisoformat(h_start)).days
+                    except ValueError:
+                        pass
+                note = style
+                if total_nights and total_nights > 0:
+                    # Extract price per night from price_text like "от 6 200 ₽/ночь"
+                    price_match = re.search(r"от\s*([\d\s]+)\s*₽/ночь", price_text)
+                    if price_match:
+                        per_night = int(price_match.group(1).replace(" ", ""))
+                        total_price = per_night * total_nights
+                        note = f"{style}, ≈ {total_price:,} ₽ за {total_nights} ноч.".replace(",", " ")
                 results[category].append(
                     TravelSearchResult(
                         title=f"{CATEGORY_TITLES[category]}: {label}",
@@ -653,7 +669,7 @@ def build_structured_link_results(
                         url=url,
                         source=label,
                         score=score,
-                        note=f"{style}, оценка {score}/10",
+                        note=note,
                     )
                 )
             else:
