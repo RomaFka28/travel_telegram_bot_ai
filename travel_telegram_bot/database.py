@@ -268,6 +268,11 @@ class Database:
                     UNIQUE(option_id, user_id),
                     FOREIGN KEY (option_id) REFERENCES date_options(id) ON DELETE CASCADE
                 );
+
+                -- Hot-path indexes for common queries
+                CREATE INDEX IF NOT EXISTS idx_trips_chat_status ON trips(chat_id, status);
+                CREATE INDEX IF NOT EXISTS idx_participants_trip ON participants(trip_id);
+                CREATE INDEX IF NOT EXISTS idx_date_options_trip ON date_options(trip_id);
                 """
             )
         # ALTER TABLE — отдельная транзакция, чтобы не смешивать с executescript (issue #7)
@@ -359,6 +364,16 @@ class Database:
                         UNIQUE (option_id, user_id)
                     )
                     """
+                )
+                # Hot-path indexes for common queries
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_trips_chat_status ON trips(chat_id, status)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_participants_trip ON participants(trip_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_date_options_trip ON date_options(trip_id)"
                 )
                 for column_name, definition in CHAT_SETTINGS_COLUMNS.items():
                     cur.execute(
