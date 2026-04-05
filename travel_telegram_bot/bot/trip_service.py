@@ -77,9 +77,6 @@ class TripService:
     def _collect_structured_results(self, request) -> tuple[list[str], dict[str, list[TravelSearchResult]], str, str]:
         context_text = f"{request.source_prompt}\n{request.notes}".strip()
         detected_needs = detect_link_needs(context_text)
-        # Housing is almost always needed for trips with multiple people
-        if request.group_size >= 2:
-            detected_needs = detected_needs | {"housing"}
         detected_needs = sorted(list(detected_needs))
         structured = build_structured_link_results(
             request.destination,
