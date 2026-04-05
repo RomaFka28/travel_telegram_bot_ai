@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime
-import urllib.parse
+from urllib import parse as urllib_parse
 
 from date_utils import parse_dates_range
 from http_utils import safe_http_get
@@ -241,7 +241,7 @@ class TravelpayoutsFlightProvider:
             query_params["return_date"] = end_date
         if one_way:
             query_params["one_way"] = 1
-        base_url = "https://www.aviasales.ru/search?" + urllib.parse.urlencode(query_params)
+        base_url = "https://www.aviasales.ru/search?" + urllib_parse.urlencode(query_params)
         if self._partner_links and self._partner_links.enabled:
             try:
                 return self._partner_links.convert(base_url, sub_id=f"{route_origin}-{route_destination}")
@@ -293,7 +293,7 @@ class TravelpayoutsFlightProvider:
                 ("types[]", "city"),
                 ("types[]", "airport"),
             ]
-            url = "https://autocomplete.travelpayouts.com/places2?" + urllib.parse.urlencode(params)
+            url = "https://autocomplete.travelpayouts.com/places2?" + urllib_parse.urlencode(params)
             payload = self._get_json(url)
             if not isinstance(payload, list) or not payload:
                 continue
@@ -350,7 +350,7 @@ class TravelpayoutsFlightProvider:
         ]
         if not one_way:
             params.insert(3, ("return_at", end_date))
-        url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates?" + urllib.parse.urlencode(params)
+        url = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates?" + urllib_parse.urlencode(params)
         payload = self._get_json(url)
         data = payload.get("data") if isinstance(payload, dict) else None
         return self._parse_offers(data, origin_code, destination_code)
@@ -400,7 +400,7 @@ class TravelpayoutsFlightProvider:
                 ]
             )
 
-        url = "https://api.travelpayouts.com/aviasales/v3/get_latest_prices?" + urllib.parse.urlencode(params)
+        url = "https://api.travelpayouts.com/aviasales/v3/get_latest_prices?" + urllib_parse.urlencode(params)
         payload = self._get_json(url)
         data = payload.get("data") if isinstance(payload, dict) else None
         return self._parse_offers(data, origin_code, destination_code)

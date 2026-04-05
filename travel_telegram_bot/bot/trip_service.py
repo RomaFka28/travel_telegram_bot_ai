@@ -77,8 +77,6 @@ class TripService:
     def _collect_structured_results(self, request) -> tuple[list[str], dict[str, list[TravelSearchResult]], str, str]:
         context_text = f"{request.source_prompt}\n{request.notes}".strip()
         detected_needs = sorted(detect_link_needs(context_text))
-        if normalized_search_value(request.destination) and "housing" not in detected_needs:
-            detected_needs.append("housing")
         structured = build_structured_link_results(
             request.destination,
             request.dates_text,
