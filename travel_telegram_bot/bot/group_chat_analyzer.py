@@ -168,7 +168,7 @@ class GroupChatAnalyzer:
             budget_hint=budget_hint,
         )
 
-        participants = self.extract_names(text)
+        participants = self._extract_names(text)
 
         return ChatSignal(
             has_travel_intent=has_intent,

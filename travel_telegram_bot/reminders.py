@@ -17,7 +17,6 @@ import json
 import logging
 from datetime import date, datetime, time, timedelta, timezone
 
-from date_utils import parse_trip_dates
 from metrics import get_metrics
 
 if False:  # TYPE_CHECKING
@@ -181,7 +180,7 @@ async def restore_reminders_on_startup(
 
     try:
         trips = await db._run(
-            lambda: db._get_all_active_trips_with_reminders()
+            lambda: db.get_all_active_trips_with_reminders()
         )
     except Exception as e:
         logger.warning("Failed to load trips for reminder restore: %s", e)
@@ -212,7 +211,7 @@ async def restore_reminders_on_startup(
             new_sent = already_sent | set(to_send)
             try:
                 await db._run(
-                    lambda: db._update_reminders_sent(trip_id, _serialize_reminders_sent(new_sent))
+                    lambda: db.update_reminders_sent(trip_id, _serialize_reminders_sent(new_sent))
                 )
             except Exception as e:
                 logger.warning("Failed to update reminders_sent for trip %d: %s", trip_id, e)
