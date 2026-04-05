@@ -106,6 +106,37 @@ class BotHandlers:
                 disable_web_page_preview=True,
             )
 
+    async def _delete_trip_and_activate_next(self, chat_id: int, trip_id: int, message, query=None, *, show_list_if_remaining=False) -> bool:
+        """Delete a trip, activate the next available one, and show its summary.
+        Returns True if trip was deleted, False otherwise."""
+        from bot.keyboards import trips_list_keyboard
+
+        deleted = self.db.delete_trip(chat_id, trip_id)
+        if not deleted:
+            return False
+        remaining_trips = self.db.list_trips(chat_id)
+        if remaining_trips:
+            next_trip_id = int(remaining_trips[0]["id"])
+            self.db.activate_trip(chat_id, next_trip_id)
+            if query and query.message:
+                if show_list_if_remaining:
+                    await query.edit_message_text(
+                        self.formatter.build_trip_list_text(chat_id),
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=trips_list_keyboard(remaining_trips, self._chat_language(chat_id)),
+                    )
+                else:
+                    await query.edit_message_text("Поездку удалил. Ниже открыл следующую доступную поездку.")
+                    await self._send_trip_summary(query.message, next_trip_id, self._chat_language(chat_id))
+            elif message:
+                await self._send_trip_summary(message, next_trip_id, self._chat_language(chat_id))
+        else:
+            if query and query.message:
+                await query.edit_message_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
+            elif message:
+                await message.reply_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
+        return True
+
     @staticmethod
     def _display_name(update: Update) -> str:
         user = update.effective_user
@@ -1267,30 +1298,10 @@ class BotHandlers:
 
                 if action == "delete_now":
                     chat_id = int(trip["chat_id"])
-                    deleted = self.db.delete_trip(chat_id, trip_id)
+                    deleted = await self._delete_trip_and_activate_next(chat_id, trip_id, None, query, show_list_if_remaining=True)
                     if not deleted:
                         await query.answer("Не удалось удалить поездку.", show_alert=True)
                         return
-                    if query.message:
-                        remaining_trips = self.db.list_trips(chat_id)
-                        if trip["status"] == "active" and remaining_trips:
-                            next_trip_id = int(remaining_trips[0]["id"])
-                            self.db.activate_trip(chat_id, next_trip_id)
-                            await query.edit_message_text("Поездку удалил. Ниже открыл следующую доступную поездку.")
-                            await query.message.reply_text(
-                                self.formatter._build_summary_html(next_trip_id),
-                                parse_mode=ParseMode.HTML,
-                                reply_markup=trip_summary_keyboard(next_trip_id, self._chat_language(chat_id)),
-                                disable_web_page_preview=True,
-                            )
-                        elif remaining_trips:
-                            await query.edit_message_text(
-                                self.formatter.build_trip_list_text(chat_id),
-                                parse_mode=ParseMode.HTML,
-                                reply_markup=trips_list_keyboard(remaining_trips, self._chat_language(chat_id)),
-                            )
-                        else:
-                            await query.edit_message_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
                     await query.answer("Поездка удалена.")
                     return
 
@@ -1591,21 +1602,8 @@ class BotHandlers:
         if trip_id is None:
             return
 
-        deleted = self.db.delete_trip(chat.id, trip_id)
-        if deleted:
-            remaining_trips = self.db.list_trips(chat.id)
-            if remaining_trips:
-                next_trip_id = int(remaining_trips[0]["id"])
-                self.db.activate_trip(chat.id, next_trip_id)
-                await message.reply_text(
-                    self.formatter._build_summary_html(next_trip_id),
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=trip_summary_keyboard(next_trip_id, self._chat_language(chat.id)),
-                    disable_web_page_preview=True,
-                )
-            else:
-                await message.reply_text("Поездка удалена. В этом чате больше нет сохранённых поездок.")
-        else:
+        deleted = await self._delete_trip_and_activate_next(chat.id, trip_id, message)
+        if not deleted:
             await message.reply_text("Не удалось удалить поездку. Проверьте ID через /trips.")
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
