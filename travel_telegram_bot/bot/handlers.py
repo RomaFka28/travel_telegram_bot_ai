@@ -552,8 +552,8 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
-        lang = self._chat_language(int(trip["chat_id"]))
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
+        lang = self._chat_language(int(trip["chat_id"]))
         if not self.flight_provider or not self.flight_provider.enabled:
             await update.effective_message.reply_text(
                 "Travelpayouts is not connected yet. Add TRAVELPAYOUTS_API_KEY in Render and I will be able to fetch ticket prices." if lang == "en" else "Travelpayouts пока не подключён. Добавьте TRAVELPAYOUTS_API_KEY в Render, и я смогу подтягивать цены на билеты."
@@ -578,6 +578,7 @@ class BotHandlers:
         message = update.effective_message
         if not trip or not message:
             return
+        self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         lang = self._chat_language(int(trip["chat_id"]))
         await message.reply_text("Looking for housing options. This may take a few seconds." if lang == "en" else "Ищу варианты и русские сценарии по жилью. Это может занять несколько секунд.")
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
@@ -941,8 +942,8 @@ class BotHandlers:
         trip = await self._get_active_trip_or_reply(update)
         if not trip:
             return
-        lang = self._chat_language(int(trip["chat_id"]))
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
+        lang = self._chat_language(int(trip["chat_id"]))
         normalized_status = self._normalize_status(" ".join(context.args)) if context.args else None
         if normalized_status:
             self._set_participant_status(int(trip["id"]), update, normalized_status)
@@ -1196,6 +1197,7 @@ class BotHandlers:
         self._remember_chat_member(update, chat_id=int(trip["chat_id"]))
         user = query.from_user
         chat = update.effective_chat
+        trip_lang = self._chat_language(int(trip["chat_id"]))
         self._log_trip_action(
             "start",
             action=action,
@@ -1216,7 +1218,7 @@ class BotHandlers:
                     refreshed_trip = self.db.get_trip_by_id(trip_id)
                     if query.message and refreshed_trip:
                         await query.message.reply_text(f"Поездка {trip_id} снова активна.")
-                        await self._send_trip_summary(query.message, trip_id, self._chat_language(int(trip["chat_id"])))
+                        await self._send_trip_summary(query.message, trip_id, trip_lang)
                     await query.answer("Поездка открыта.")
                     return
 
@@ -1225,7 +1227,7 @@ class BotHandlers:
                         await query.edit_message_text(
                             text=self.formatter.build_trip_delete_confirm_text(trip),
                             parse_mode=ParseMode.HTML,
-                            reply_markup=trip_delete_confirm_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
+                            reply_markup=trip_delete_confirm_keyboard(trip_id, trip_lang),
                         )
                     await query.answer("Нужно подтверждение.")
                     return
@@ -1233,7 +1235,7 @@ class BotHandlers:
                 if action == "delete_cancel":
                     if query.message:
                         if trip["status"] == "active":
-                            await self._edit_message_to_summary(query, trip_id, self._chat_language(int(trip["chat_id"])))
+                            await self._edit_message_to_summary(query, trip_id, trip_lang)
                         else:
                             await query.edit_message_text("Удаление отменено. Откройте /trips, чтобы продолжить работу с архивом.")
                     await query.answer("Удаление отменено.")
@@ -1254,9 +1256,9 @@ class BotHandlers:
 
             if action in {"going", "interested", "not_going"}:
                 self._set_participant_status(trip_id, update, action)
-                await query.answer(self.formatter.build_status_updated_text(action, self._chat_language(int(trip["chat_id"]))))
+                await query.answer(self.formatter.build_status_updated_text(action, trip_lang))
                 if query.message:
-                    await self._edit_message_to_summary(query, trip_id, self._chat_language(int(trip["chat_id"])))
+                    await self._edit_message_to_summary(query, trip_id, trip_lang)
                 self._log_trip_action(
                     "success",
                     action=action,
@@ -1273,7 +1275,7 @@ class BotHandlers:
                     await query.message.reply_text(
                         self.formatter.build_route_section_text(trip_id),
                         parse_mode=ParseMode.HTML,
-                        reply_markup=route_section_keyboard(trip_id, self._chat_language(int(trip["chat_id"]))),
+                        reply_markup=route_section_keyboard(trip_id, trip_lang),
                         disable_web_page_preview=True,
                     )
                 return
@@ -1281,7 +1283,7 @@ class BotHandlers:
             if action == "show_summary":
                 await query.answer()
                 if query.message:
-                    await self._edit_message_to_summary(query, trip_id, self._chat_language(int(trip["chat_id"])))
+                    await self._edit_message_to_summary(query, trip_id, trip_lang)
                 return
 
             if action == "show_tickets":
