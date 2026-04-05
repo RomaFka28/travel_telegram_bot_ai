@@ -76,8 +76,7 @@ class TripService:
 
     def _collect_structured_results(self, request) -> tuple[list[str], dict[str, list[TravelSearchResult]], str, str]:
         context_text = f"{request.source_prompt}\n{request.notes}".strip()
-        detected_needs = detect_link_needs(context_text)
-        detected_needs = sorted(list(detected_needs))
+        detected_needs = sorted(list(detect_link_needs(context_text)))
         structured = build_structured_link_results(
             request.destination,
             request.dates_text,
@@ -152,7 +151,14 @@ class TripService:
         if "tickets" in detected_needs and not normalized_search_value(request.origin):
             questions.append("Уточнить город вылета для билетов.")
         if "housing" in detected_needs:
-            questions.append("Подтвердить формат жилья: отель, квартира или дом.")
+            # Check if housing type is already specified in the request
+            context_lower = (request.source_prompt + " " + (request.notes or "")).lower()
+            has_housing_type = any(
+                kw in context_lower
+                for kw in ("отел", "квартир", "апарт", "дом", "студи", "хостел", "гостиниц")
+            )
+            if not has_housing_type:
+                questions.append("Подтвердить формат жилья: отель, квартира или дом.")
         if "car_rental" in detected_needs:
             questions.append("Нужна ли аренда авто на все дни или только на 1 день.")
         if "bike_rental" in detected_needs:
