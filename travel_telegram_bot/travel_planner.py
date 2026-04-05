@@ -688,7 +688,7 @@ class TravelPlanner:
             aliases=(),
         )
 
-    def _extract_destination(self, text: str) -> str | None:
+    def extract_destination(self, text: str) -> str | None:
         lowered = text.lower()
         aliases: list[tuple[str, str]] = []
         for profile in DESTINATIONS:
@@ -728,7 +728,7 @@ class TravelPlanner:
         return " ".join(part[:1].upper() + part[1:] for part in text.split())
 
     @staticmethod
-    def _extract_days_count(text: str) -> int:
+    def extract_days_count(text: str) -> int:
         range_match = re.search(
             r"\b(?:на\s+)?(\d{1,2})\s*(?:-|–|—|до)\s*(\d{1,2})\s*(?:дн(?:я|ей)?|сут(?:ок)?|ноч(?:ь|и|ей)?)",
             text,
@@ -749,7 +749,7 @@ class TravelPlanner:
         return 3
 
     @staticmethod
-    def _extract_group_size(text: str) -> int:
+    def extract_group_size(text: str) -> int:
         lowered = text.lower()
         for value, patterns in {
             1: [r"\bя\s+буду\s+один\b", r"\bя\s+буду\s+одна\b", r"\bбуду\s+один\b", r"\bбуду\s+одна\b", r"\bодин\b", r"\bодна\b", r"\bсам\b", r"\bсама\b"],
@@ -776,7 +776,7 @@ class TravelPlanner:
         return 2
 
     @staticmethod
-    def _extract_origin(text: str) -> str | None:
+    def extract_origin(text: str) -> str | None:
         match = re.search(
             r"\bиз\s+([A-Za-zА-Яа-яЁё\-]+(?:\s+[A-Za-zА-Яа-яЁё\-]+){0,2})",
             text,
@@ -795,7 +795,7 @@ class TravelPlanner:
         return candidate or None
 
     @staticmethod
-    def _extract_dates(text: str) -> str:
+    def extract_dates(text: str) -> str:
         numeric_range = re.search(
             r"\b(?:с\s*)?(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\s*(?:по|до|-|–|—)\s*(\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?)\b",
             text,
@@ -830,7 +830,7 @@ class TravelPlanner:
 
         return "не указаны"
 
-    def _extract_budget(self, text: str) -> str:
+    def extract_budget(self, text: str) -> str:
         return self.interpret_budget_text(text).display_text
 
     def interpret_budget_text(self, text: str) -> BudgetInterpretation:
@@ -875,7 +875,7 @@ class TravelPlanner:
         ):
             return BudgetInterpretation("Эконом", "эконом", "class_only", confidence=0.9)
 
-        numeric = self._extract_budget_number(lowered)
+        numeric = self.extract_budget_number(lowered)
         if numeric is not None:
             if re.search(r"\bдо\s+\d", lowered):
                 return BudgetInterpretation(f"до {self._format_budget_amount(numeric)} ₽", self._classify_budget_amount(numeric), "ceiling", numeric, 0.95)
@@ -895,7 +895,7 @@ class TravelPlanner:
         return BudgetInterpretation("Бизнес", "бизнес", "class_only", confidence=0.3)
 
     @staticmethod
-    def _extract_budget_number(text: str) -> int | None:
+    def extract_budget_number(text: str) -> int | None:
         normalized = (text or "").replace("\xa0", " ")
         compact_k = re.search(r"\b(\d{1,3})\s*(к|k)\b", normalized, flags=re.IGNORECASE)
         if compact_k:
@@ -921,7 +921,7 @@ class TravelPlanner:
             return "первый класс"
         return "бизнес"
 
-    def _extract_interests(self, text: str) -> list[str]:
+    def extract_interests(self, text: str) -> list[str]:
         lowered = text.lower()
         result: list[str] = []
         for interest, keywords in INTEREST_KEYWORDS.items():

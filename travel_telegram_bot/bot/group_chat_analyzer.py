@@ -120,41 +120,41 @@ class GroupChatAnalyzer:
 
         if destination is None:
             try:
-                destination = self._planner._extract_destination(text)
+                destination = self._planner.extract_destination(text)
             except (ValueError, AttributeError, TypeError) as e:
                 logger.debug("Failed to extract destination: %s", e)
         if origin is None:
             try:
-                origin = self._planner._extract_origin(text)
+                origin = self._planner.extract_origin(text)
             except (ValueError, AttributeError, TypeError) as e:
                 logger.debug("Failed to extract origin: %s", e)
         if dates_text is None:
             try:
-                raw_dates = self._planner._extract_dates(text)
+                raw_dates = self._planner.extract_dates(text)
                 dates_text = raw_dates if raw_dates != "не указаны" else None
             except (ValueError, AttributeError, TypeError) as e:
                 logger.debug("Failed to extract dates: %s", e)
         if days_count is None:
             try:
-                parsed_days = self._planner._extract_days_count(text)
+                parsed_days = self._planner.extract_days_count(text)
                 days_count = parsed_days if parsed_days != 3 or self._has_explicit_days(text) else None
             except (ValueError, AttributeError, TypeError) as e:
                 logger.debug("Failed to extract days: %s", e)
         if group_size is None:
             try:
-                parsed_group_size = self._planner._extract_group_size(text)
+                parsed_group_size = self._planner.extract_group_size(text)
                 group_size = parsed_group_size if self._has_explicit_group_size(text) else None
             except (ValueError, AttributeError, TypeError) as e:
                 logger.debug("Failed to extract group size: %s", e)
         if budget_hint is None:
             try:
-                raw_budget = self._planner._extract_budget(text)
+                raw_budget = self._planner.extract_budget(text)
                 budget_hint = raw_budget if raw_budget != "Бизнес" or self._has_explicit_budget(text) else None
             except (ValueError, AttributeError, TypeError) as e:
                 logger.debug("Failed to extract budget: %s", e)
         if not interests:
             try:
-                interests = self._planner._extract_interests(text)
+                interests = self._planner.extract_interests(text)
             except (ValueError, AttributeError, TypeError) as e:
                 logger.debug("Failed to extract interests: %s", e)
 
@@ -168,7 +168,7 @@ class GroupChatAnalyzer:
             budget_hint=budget_hint,
         )
 
-        participants = self._extract_names(text)
+        participants = self.extract_names(text)
 
         return ChatSignal(
             has_travel_intent=has_intent,
@@ -194,7 +194,7 @@ class GroupChatAnalyzer:
         destination_counts: dict[str, int] = {}
         for message in cleaned[-8:]:
             try:
-                destination = self._planner._extract_destination(message)
+                destination = self._planner.extract_destination(message)
             except Exception:
                 destination = None
             if not destination:

@@ -259,12 +259,12 @@ class TripService:
 
     def _merge_edit_request(self, trip: dict, edit_text: str):
         current = self._request_from_trip_row(trip)
-        destination = self._planner._extract_destination(edit_text) or str(current["destination"])
-        origin = self._planner._extract_origin(edit_text) or str(current["origin"])
-        days_count = self._planner._extract_days_count(edit_text) if has_days_hint(edit_text) else int(current["days_count"])
-        dates_text = self._planner._extract_dates(edit_text) if has_dates_hint(edit_text) else str(current["dates_text"])
-        budget_text = self._planner._extract_budget(edit_text) if has_budget_hint(edit_text) else str(current["budget_text"])
-        interests = self._planner._extract_interests(edit_text)
+        destination = self._planner.extract_destination(edit_text) or str(current["destination"])
+        origin = self._planner.extract_origin(edit_text) or str(current["origin"])
+        days_count = self._planner.extract_days_count(edit_text) if has_days_hint(edit_text) else int(current["days_count"])
+        dates_text = self._planner.extract_dates(edit_text) if has_dates_hint(edit_text) else str(current["dates_text"])
+        budget_text = self._planner.extract_budget(edit_text) if has_budget_hint(edit_text) else str(current["budget_text"])
+        interests = self._planner.extract_interests(edit_text)
         interests_text = ", ".join(interests) if interests else str(current["interests_text"])
         source_prompt = truncate_source_prompt(
             f"{current['source_prompt']}\n\u0418\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435: {edit_text}"

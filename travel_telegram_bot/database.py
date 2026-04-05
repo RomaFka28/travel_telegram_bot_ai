@@ -397,7 +397,14 @@ class Database:
 
     @staticmethod
     def _rows_to_dicts(rows: list[Any]) -> list[dict[str, Any]]:
-        return [dict(row) for row in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                result.append(dict(row))
+            except (TypeError, ValueError):
+                # Fallback for non-dict rows (shouldn't happen with proper row_factory)
+                result.append({"_raw": row})
+        return result
 
     @staticmethod
     def _coerce_value(value: Any) -> Any:
