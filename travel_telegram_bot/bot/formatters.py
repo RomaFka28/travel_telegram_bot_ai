@@ -248,9 +248,17 @@ class TripFormatter:
             if active_trip
             else f"{tr(lang, 'settings_active_trip')}: <b>{tr(lang, 'settings_none')}</b>"
         )
+
+        # Chat analysis status: disabled when there's an active trip
+        if active_trip:
+            chat_analysis_line = f"• {tr(lang, 'settings_chat_analysis')}: <b>{tr(lang, 'settings_chat_analysis_disabled')}</b>"
+        else:
+            chat_analysis_line = f"• {tr(lang, 'settings_chat_analysis')}: <b>{tr(lang, 'settings_chat_analysis_on') if autodraft_enabled else tr(lang, 'settings_chat_analysis_off')}</b>"
+
         return (
             f"<b>{tr(lang, 'settings_title')}</b>\n"
             f"{active_trip_line}\n\n"
+            f"{chat_analysis_line}\n"
             f"• {tr(lang, 'settings_reminders')}: <b>{tr(lang, 'settings_reminders_on') if reminders_enabled else tr(lang, 'settings_reminders_off')}</b>\n"
             f"• {tr(lang, 'settings_autodraft')}: <b>{tr(lang, 'settings_autodraft_on') if autodraft_enabled else tr(lang, 'settings_autodraft_off')}</b>\n"
             f"• {tr(lang, 'settings_language')}: <b>{tr(lang, 'language_name')}</b>\n\n"

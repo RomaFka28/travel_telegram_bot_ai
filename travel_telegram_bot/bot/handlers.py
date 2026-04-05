@@ -1091,6 +1091,10 @@ class BotHandlers:
         settings = await self.db._run(self.db.get_or_create_settings, chat.id)
         if not self._bool_from_db(settings.get("autodraft_enabled")):
             return
+        # If there's an active trip, disable chat analysis — user should edit via buttons
+        active_trip = await self.db._run(self.db.get_active_trip, chat.id)
+        if active_trip:
+            return
         text = (message.text or "").strip()
         if len(text) < MIN_TEXT_LENGTH_FOR_AUTO_PLAN:
             return
