@@ -201,14 +201,20 @@ class TravelpayoutsFlightProvider:
         for label, offer in self._prioritize_offers(offers)[:4]:
             cabin_label = self._trip_class_label(offer.trip_class)
             transfers = "без пересадок" if offer.number_of_changes == 0 else f"{offer.number_of_changes} перес."
+            price_per_person = offer.value
+            total_price = price_per_person * max(1, group_size)
+            if group_size > 1:
+                price_text = f"{price_per_person:,} ₽/чел. (≈ {total_price:,} ₽ за {group_size} чел.)".replace(",", " ")
+            else:
+                price_text = f"{price_per_person:,} ₽".replace(",", " ")
             results.append(
                 TravelSearchResult(
                     title=label,
-                    price_text=f"{offer.value:,} \u20bd/\u0447\u0435\u043b.".replace(",", " "),
+                    price_text=price_text,
                     url=search_url,
                     source="Travelpayouts / Aviasales",
                     score=0,
-                    budget_fit=self._budget_fit_text(offer.value, budget_text),
+                    budget_fit=self._budget_fit_text(price_per_person, budget_text),
                     dates=self._format_offer_dates(offer.depart_date, offer.return_date),
                     note=transfers if not cabin_label else f"{cabin_label}, {transfers}",
                 )
@@ -513,12 +519,12 @@ class TravelpayoutsFlightProvider:
         thresholds = {"эконом": 18000, "бизнес": 40000, "первый класс": 75000}
         limit = thresholds[level]
         if price_per_person <= int(limit * 0.75):
-            return f"хорошо вписывается в класс {level}"
+            return f"хорошо вписывается в {level}"
         if price_per_person <= limit:
-            return f"вписывается в класс {level}"
+            return f"вписывается в {level}"
         if price_per_person <= int(limit * 1.25):
-            return f"на грани для класса {level}"
-        return f"дороже ожидаемого для класса {level}"
+            return f"выше бюджета {level}"
+        return f"существенно выше бюджета {level}"
 
     @classmethod
     def _score_offer(cls, price_per_person: int, changes: int, budget_text: str) -> int:
