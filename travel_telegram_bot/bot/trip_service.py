@@ -80,7 +80,7 @@ class TripService:
         # Housing is almost always needed for trips with multiple people
         if request.group_size >= 2:
             detected_needs = detected_needs | {"housing"}
-        detected_needs = sorted(detected_needs)
+        detected_needs = sorted(list(detected_needs))
         structured = build_structured_link_results(
             request.destination,
             request.dates_text,

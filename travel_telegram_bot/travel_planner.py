@@ -607,7 +607,7 @@ class TravelPlanner:
         if not destination_clean:
             raise ValueError("Нужно указать направление поездки.")
 
-        interests = self._extract_interests(interests_text) or self._split_interests(interests_text)
+        interests = self.extract_interests(interests_text) or self._split_interests(interests_text)
         return TripRequest(
             title=(title or f"{destination_clean} • {days_count} дн.").strip(),
             destination=self._display_destination(destination_clean),
