@@ -482,12 +482,13 @@ class TripFormatter:
         
         header = self._render_summary_header(trip, lang, has_destination)
         readiness = self._render_readiness(trip, trip_id, lang)
+        quick_view = self._render_quick_view(trip, trip_id, lang, has_destination)
         details = self._render_details(trip, lang, has_destination)
         participants = self._render_participants(trip_id, lang)
         notes_section = self._render_notes_and_questions(trip, lang)
         structured = self._render_structured_results(trip, lang, has_destination)
 
-        return header + "\n" + readiness + details + participants + notes_section + structured
+        return header + "\n" + readiness + "\n" + quick_view + details + participants + notes_section + structured
     
     def _render_summary_header(self, trip: dict, lang: str, has_destination: bool) -> str:
         """Рендерит шапку summary: заголовок + основные поля."""
