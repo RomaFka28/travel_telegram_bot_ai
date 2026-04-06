@@ -517,15 +517,7 @@ class TripFormatter:
         return f"\n{readiness_text}\n{html.escape(checklist_text)}"
     
     def _render_quick_view(self, trip: dict, trip_id: int, lang: str, has_destination: bool) -> str:
-        """Рендерит блок быстрого просмотра."""
-        summary_short = (trip.get("summary_short_text") or "").strip()
-        short_summary_text = (
-            summary_short
-            if summary_short and has_destination
-            else tr(lang, "summary_short_no_destination")
-        )
-        short_block = f"\n\n<b>{tr(lang, 'summary_quick')}</b>\n{html.escape(short_summary_text)}"
-        
+        """Рендерит блоки: контекст, маршрут, где жить, бюджет."""
         context_preview = self._escape_block(
             (trip["context_text"] or "").strip()
             if has_destination and (trip["context_text"] or "").strip()
@@ -537,11 +529,9 @@ class TripFormatter:
             else tr(lang, "group_wait_destination")
         )
         budget_total = html.escape(trip['budget_total_text'] or tr(lang, 'summary_budget_total_empty'))
-        
+
         return (
-            short_block
-            + "\n\n"
-            + f"<b>{tr(lang, 'summary_context')}</b>\n{context_preview}\n\n"
+            f"<b>{tr(lang, 'summary_context')}</b>\n{context_preview}\n\n"
             + f"<b>{tr(lang, 'summary_route')}</b>\n{tr(lang, 'summary_route_button_note')}\n\n"
             + f"<b>{tr(lang, 'summary_stay')}</b>\n{stay_preview}\n\n"
             + f"<b>{tr(lang, 'summary_budget_total')}</b>\n{budget_total}"
