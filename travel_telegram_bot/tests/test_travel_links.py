@@ -1,4 +1,4 @@
-from travel_links import _estimate_housing_result, _housing_links, _ticket_links, build_links_map, build_structured_link_results
+from travel_links import _estimate_housing_result, _housing_links, _ticket_links, build_links_map, build_structured_link_results, detect_link_needs
 
 
 def test_housing_links_use_budget_profile_for_international_destination() -> None:
@@ -92,3 +92,10 @@ def test_build_links_map_keeps_one_way_trip_without_checkout_or_return_date() ->
     housing_urls = [url for _, url in links["housing"]]
     assert all("return_date=" not in url for url in ticket_urls)
     assert all("checkout=" not in url and "checkoutDate=" not in url for url in housing_urls)
+
+
+def test_detect_link_needs_treats_route_type_clarification_as_ticket_signal() -> None:
+    needs = detect_link_needs("из Иркутска в Томск, квартира, туда-обратно")
+
+    assert "tickets" in needs
+    assert "housing" in needs
