@@ -40,6 +40,7 @@ SQLITE_POOL_GET_TIMEOUT = 30
 class Settings:
     telegram_token: str
     database_dsn: str
+    bot_timezone: str = "Asia/Tomsk"
     openrouter_api_key: str = ""
     openrouter_model: str = "qwen/qwen3.6-plus:free"
     openrouter_web_search: bool = True
@@ -72,6 +73,7 @@ def load_settings() -> Settings:
     telegram_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     database_url = os.getenv("DATABASE_URL", "").strip()
     database_path = os.getenv("DATABASE_PATH", "data/travel_bot.db").strip()
+    bot_timezone = os.getenv("BOT_TIMEZONE", "Asia/Tomsk").strip() or "Asia/Tomsk"
     log_level = os.getenv("LOG_LEVEL", "INFO").strip().upper()
     openrouter_api_key = os.getenv("OPENROUTER_API_KEY", "").strip()
     openrouter_model = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.6-plus:free").strip()
@@ -90,6 +92,7 @@ def load_settings() -> Settings:
     return Settings(
         telegram_token=telegram_token,
         database_dsn=database_url or _resolve_database_path(database_path),
+        bot_timezone=bot_timezone,
         openrouter_api_key=openrouter_api_key,
         openrouter_model=openrouter_model or "qwen/qwen3.6-plus:free",
         openrouter_web_search=openrouter_web_search,

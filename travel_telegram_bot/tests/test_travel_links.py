@@ -1,4 +1,4 @@
-from travel_links import _estimate_housing_result, _housing_links, _ticket_links, build_structured_link_results
+from travel_links import _estimate_housing_result, _housing_links, _ticket_links, build_links_map, build_structured_link_results
 
 
 def test_housing_links_use_budget_profile_for_international_destination() -> None:
@@ -15,7 +15,7 @@ def test_estimate_housing_result_raises_price_for_premium_budget() -> None:
     premium_price, premium_style, _ = _estimate_housing_result("Paris", "🏨 Booking.com", 1, "first class", "")
 
     assert economy_price == "from 95 EUR/night"
-    assert "премиаль" in premium_style.lower()
+    assert "премиал" in premium_style.lower()
     assert premium_price != economy_price
 
 
@@ -60,3 +60,35 @@ def test_housing_links_include_home_search_sources_for_house_context() -> None:
     labels = [label for label, _ in links]
     assert "🏠 Airbnb" in labels
     assert any(label in labels for label in ("🏠 Суточно", "🏡 Booking Homes"))
+
+
+def test_build_links_map_uses_days_count_to_extend_checkout_date() -> None:
+    links = build_links_map(
+        "Томск",
+        "12 июня",
+        "Иркутск",
+        days_count=3,
+        group_size=2,
+        context_text="квартира, туда-обратно",
+        budget_text="эконом",
+    )
+
+    housing_urls = [url for _, url in links["housing"]]
+    assert any("checkout=2026-06-14" in url or "checkoutDate=2026-06-14" in url for url in housing_urls)
+
+
+def test_build_links_map_keeps_one_way_trip_without_checkout_or_return_date() -> None:
+    links = build_links_map(
+        "Стамбул",
+        "12 июня",
+        "Тбилиси",
+        days_count=3,
+        group_size=1,
+        context_text="билет в одну сторону, отель",
+        budget_text="бизнес",
+    )
+
+    ticket_urls = [url for _, url in links["tickets"]]
+    housing_urls = [url for _, url in links["housing"]]
+    assert all("return_date=" not in url for url in ticket_urls)
+    assert all("checkout=" not in url and "checkoutDate=" not in url for url in housing_urls)

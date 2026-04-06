@@ -88,7 +88,7 @@ async def get_forecast_for_date(
     params = {
         "latitude": lat,
         "longitude": lon,
-        "daily": "temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode,precipitation_sum,windspeed_10m_max",
+        "daily": "temperature_2m_max,temperature_2m_min,apparent_temperature_max,weathercode,precipitation_sum,wind_speed_10m_max",
         "start_date": target_date,
         "end_date": target_date,
         "timezone": "auto",
@@ -137,7 +137,7 @@ def format_forecast(city: str, forecast: dict[str, Any], target_date: str) -> st
     t_min = forecast.get("temperature_2m_min")
     feels_max = forecast.get("apparent_temperature_max")
     precip = forecast.get("precipitation_sum")
-    wind_max = forecast.get("windspeed_10m_max")
+    wind_max = forecast.get("wind_speed_10m_max")
 
     # Форматируем дату для вывода
     try:

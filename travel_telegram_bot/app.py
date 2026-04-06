@@ -74,14 +74,13 @@ async def post_init(application) -> None:
     ]
     await application.bot.set_my_commands(commands)
 
-    # Restore reminders on startup: send missed reminders for active trips
-    from database import Database
+    # Restore reminders on startup: recreate future jobs and deliver today's missed reminders once
     from reminders import restore_reminders_on_startup
 
     db_instance = application.bot_data.get("db")
     if db_instance:
         try:
-            sent = await restore_reminders_on_startup(application.bot, db_instance)
+            sent = await restore_reminders_on_startup(application, db_instance)
             if sent:
                 logger.info("Restored %d reminders on startup", sent)
         except Exception as e:
@@ -155,8 +154,14 @@ def build_application():
         .build()
     )
 
-    # Store db reference for reminder restoration
+    if app.job_queue is None:
+        logger.warning(
+            "JobQueue is unavailable. Install reminder scheduler dependencies to enable trip reminders."
+        )
+
+    # Store shared app resources for reminders and startup recovery
     app.bot_data["db"] = database
+    app.bot_data["bot_timezone"] = settings.bot_timezone
 
     new_trip_conversation = ConversationHandler(
         entry_points=[CommandHandler("newtrip", handlers.new_trip_start)],

@@ -7,6 +7,7 @@ import urllib.parse
 from datetime import date
 
 from config import HTTP_IATA_MAX_RETRIES, HTTP_IATA_TIMEOUT
+from date_utils import is_one_way_trip_text, resolve_trip_dates
 from http_utils import safe_http_get
 from travel_locale import detect_route_locale
 from travel_result_models import TravelSearchResult, trim_results
@@ -572,6 +573,7 @@ def build_links_map(
     dates_text: str | None,
     origin: str | None,
     *,
+    days_count: int | None = None,
     group_size: int = 2,
     context_text: str = "",
     budget_text: str = "",
@@ -580,7 +582,10 @@ def build_links_map(
     if not normalized_destination:
         return {}
 
-    start_date, end_date = _parse_date_range(dates_text)
+    start_resolved, end_resolved = resolve_trip_dates(dates_text, days_count)
+    one_way = is_one_way_trip_text(context_text, dates_text)
+    start_date = start_resolved.isoformat() if start_resolved else None
+    end_date = None if one_way else (end_resolved.isoformat() if end_resolved else None)
     needs = detect_link_needs(context_text)
     if not needs:
         needs = {"tickets", "housing"}
@@ -619,6 +624,7 @@ def build_structured_link_results(
     dates_text: str | None,
     origin: str | None,
     *,
+    days_count: int | None = None,
     group_size: int = 2,
     context_text: str = "",
     budget_text: str = "",
@@ -627,6 +633,7 @@ def build_structured_link_results(
         destination,
         dates_text,
         origin,
+        days_count=days_count,
         group_size=group_size,
         context_text=context_text,
         budget_text=budget_text,
@@ -645,13 +652,14 @@ def build_structured_link_results(
         for label, url in items:
             if category == "housing":
                 price_text, style, score = _estimate_housing_result(destination, label, group_size, budget_text, context_text)
-                # Calculate total nights from dates_text
-                h_start, h_end = _parse_date_range(dates_text)
+                h_start, h_end = resolve_trip_dates(dates_text, days_count)
+                if is_one_way_trip_text(context_text, dates_text):
+                    h_end = None
                 total_nights = None
                 if h_start and h_end:
                     try:
-                        total_nights = (date.fromisoformat(h_end) - date.fromisoformat(h_start)).days
-                    except ValueError:
+                        total_nights = (h_end - h_start).days
+                    except TypeError:
                         pass
                 note = style
                 if total_nights and total_nights > 0:
@@ -704,6 +712,7 @@ def build_links_text(
     dates_text: str | None,
     origin: str | None,
     *,
+    days_count: int | None = None,
     group_size: int = 2,
     context_text: str = "",
     budget_text: str = "",
@@ -712,6 +721,7 @@ def build_links_text(
         destination,
         dates_text,
         origin,
+        days_count=days_count,
         group_size=group_size,
         context_text=context_text,
         budget_text=budget_text,

@@ -728,7 +728,8 @@ class Database:
             with self._connect() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "SELECT t.id, t.chat_id, t.title, t.destination, t.dates_text, t.reminders_sent, "
+                        "SELECT t.id, t.chat_id, t.title, t.destination, t.dates_text, t.days_count, "
+                        "t.notes, t.source_prompt, t.reminders_sent, "
                         "cs.language_code "
                         "FROM trips t "
                         "LEFT JOIN chat_settings cs ON t.chat_id = cs.chat_id "
@@ -739,7 +740,8 @@ class Database:
         with self._connect() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT t.id, t.chat_id, t.title, t.destination, t.dates_text, t.reminders_sent, "
+                "SELECT t.id, t.chat_id, t.title, t.destination, t.dates_text, t.days_count, "
+                "t.notes, t.source_prompt, t.reminders_sent, "
                 "cs.language_code "
                 "FROM trips t "
                 "LEFT JOIN chat_settings cs ON t.chat_id = cs.chat_id "

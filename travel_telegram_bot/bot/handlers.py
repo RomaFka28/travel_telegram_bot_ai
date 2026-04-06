@@ -403,12 +403,16 @@ class BotHandlers:
             from reminders import schedule_trip_reminders
 
             await schedule_trip_reminders(
-                bot=context.bot,
+                context.application if hasattr(context, "application") else None,
                 chat_id=chat.id,
                 trip_id=trip_id,
                 trip_title=payload.get("title", f"Поездка #{trip_id}"),
                 destination=payload.get("destination", ""),
                 dates_text=payload.get("dates_text", ""),
+                days_count=int(payload.get("days_count", 0) or 0) or None,
+                source_text="\n".join(
+                    part for part in (payload.get("source_prompt", ""), payload.get("notes", "")) if part
+                ),
                 lang=trip_lang,
             )
         except Exception as e:
