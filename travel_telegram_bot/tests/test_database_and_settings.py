@@ -1,5 +1,6 @@
 import threading
 
+from bot.formatters import TripFormatter
 from database import Database
 from travel_planner import TravelPlanner
 
@@ -135,6 +136,34 @@ def test_trip_schema_keeps_structured_result_columns(tmp_path) -> None:
     assert "Тест" in (trip["flight_results"] or "")
     assert "housing" in (trip["detected_needs"] or "")
     assert trip["summary_short_text"] == "Куда: Казань"
+
+
+def test_summary_formatter_keeps_full_context_and_stay_text(tmp_path) -> None:
+    database = Database(str(tmp_path / "formatter.db"))
+    database.init_db()
+    formatter = TripFormatter(database)
+
+    trip_id = database.create_trip(
+        chat_id=92,
+        created_by=1,
+        payload={
+            **_sample_payload("Владивосток"),
+            "context_text": (
+                "Владивосток - город с уникальным расположением на полуострове, окруженный морем и горами. "
+                "Многие туристы не знают, что Владивосток имеет свой собственный остров - Русский."
+            ),
+            "stay_text": (
+                "Для проживания подойдут районы Центр или Седанка. "
+                "Район Центр подходит для группы из 4 человек, так как там расположены многие достопримечательности."
+            ),
+        },
+    )
+    database.set_selected_trip(92, trip_id)
+
+    rendered = formatter._build_summary_html(trip_id)
+
+    assert "Владивосток имеет свой собственный остров" in rendered
+    assert "Район Центр подходит для группы из 4 человек" in rendered
 
 
 def test_chat_member_tracking_counts_known_people(tmp_path) -> None:

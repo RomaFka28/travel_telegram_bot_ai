@@ -526,13 +526,13 @@ class TripFormatter:
         short_block = f"\n\n<b>{tr(lang, 'summary_quick')}</b>\n{html.escape(short_summary_text)}"
         
         context_preview = self._escape_block(
-            self._preview_multiline(trip["context_text"] or "", max_blocks=1)
-            if has_destination
+            (trip["context_text"] or "").strip()
+            if has_destination and (trip["context_text"] or "").strip()
             else tr(lang, "summary_short_no_destination")
         )
         stay_preview = self._escape_block(
-            self._preview_multiline(trip["stay_text"] or "", max_blocks=1)
-            if has_destination
+            (trip["stay_text"] or "").strip()
+            if has_destination and (trip["stay_text"] or "").strip()
             else tr(lang, "group_wait_destination")
         )
         budget_total = html.escape(trip['budget_total_text'] or tr(lang, 'summary_budget_total_empty'))
