@@ -702,8 +702,8 @@ def build_structured_link_results(
                 price_text = "открыть варианты по ссылке"
                 note = f"оценка {score}/10"
                 if category == "tickets":
-                    price_text = "поиск билетов по ссылке"
-                    note = "поиск и покупка по ссылке"
+                    price_text = "цена не загружена"
+                    note = "откройте поиск по ссылке"
                 results[category].append(
                     TravelSearchResult(
                         title=f"{CATEGORY_TITLES[category]}: {label}",

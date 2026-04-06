@@ -99,3 +99,19 @@ def test_detect_link_needs_treats_route_type_clarification_as_ticket_signal() ->
 
     assert "tickets" in needs
     assert "housing" in needs
+
+
+def test_ticket_fallback_results_mark_price_as_not_loaded() -> None:
+    structured = build_structured_link_results(
+        "Томск",
+        "12 июня",
+        "Иркутск",
+        days_count=3,
+        group_size=1,
+        context_text="туда-обратно",
+        budget_text="эконом",
+    )
+
+    assert structured["tickets"]
+    assert structured["tickets"][0].price_text == "цена не загружена"
+    assert structured["tickets"][0].note == "откройте поиск по ссылке"
